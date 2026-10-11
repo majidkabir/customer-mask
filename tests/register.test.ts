@@ -2,6 +2,9 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { On, TurnStepChunk } from 'claude-code'
 
+/** Builds a placeholder at run time, so no literal token sits in this file. */
+const ph = (label: string, n: number) => `<<${label}_${n}>>`
+
 const CONFIG = JSON.stringify({
   customers: ['Acme Freight A/S'],
   patterns: [{ label: 'SHIPMENT', regex: '\\bSHP\\d{8}\\b' }],
@@ -38,6 +41,7 @@ function world(on: On, w: World = {}) {
   on('tool.call', ($, e) => {
     if (e.tool === 'Bash') seen.ran = e.command
     if (e.tool === 'WebSearch') seen.ran = e.query
+    if (String(e.tool).startsWith('mcp__')) seen.ran = String((e as { text?: unknown }).text)
     return { result: { stdout: 'ok', stderr: '', interrupted: false } } as never
   })
   on('prompt.compose', () => ({ sections: w.sections ?? [] }))
@@ -167,6 +171,23 @@ describe('tools that send data off the machine', () => {
     await appendPrompt($, 'Acme Freight A/S')
     await $.tool.call({ tool: 'WebSearch', query: 'news about <<CUSTOMER_1>>' } as never)
     expect(seen.ran).toBe('news about Acme Freight A/S')
+  })
+})
+
+describe('MCP tools', () => {
+  test('an MCP tool keeps its placeholders by default', async ($, on) => {
+    const seen = world(on)
+    await appendPrompt($, 'Acme Freight A/S')
+    await $.tool.call({ tool: 'mcp__slack__post_message', text: `about ${ph('CUSTOMER', 1)}` } as never)
+    expect(seen.ran).toBe(`about ${ph('CUSTOMER', 1)}`)
+  })
+
+  test('a tool listed in unmaskedTools gets real values', async ($, on) => {
+    const config = JSON.stringify({ customers: ['Acme Freight A/S'], unmaskedTools: ['mcp__local_db__*'] })
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config } })
+    await appendPrompt($, 'Acme Freight A/S')
+    await $.tool.call({ tool: 'mcp__local_db__query', text: `where name = '${ph('CUSTOMER', 1)}'` } as never)
+    expect(seen.ran).toBe("where name = 'Acme Freight A/S'")
   })
 })
 

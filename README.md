@@ -85,7 +85,7 @@ It shows the config it loaded and every value it has replaced so far. The status
 | Per-session parts of the system prompt (git branch, paths, …) | ✅ |
 | Subagents' conversations | ✅ |
 | The transcript saved on disk (`~/.claude/projects/…`) | ✅ placeholders only |
-| Arguments of `WebSearch` / `WebFetch` (they leave your machine) | ✅ kept masked |
+| Arguments of `WebSearch`, `WebFetch` and every MCP tool (they can leave your machine) | ✅ kept masked; local MCP tools can be exempted |
 | Automatic session title in **headless** runs (`claude -p`, SDK) | ❌ see [open questions](docs/open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt) |
 | Images and PDFs | ❌ text only |
 | Customer names that are in neither your list nor a pattern | ❌ detection is list- and pattern-based |

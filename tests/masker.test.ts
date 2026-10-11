@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { buildRules, mask, StreamUnmasker, unmask, unmaskDeep, Vault } from '../hooks/masker'
+import {
+  buildRules,
+  DEFAULT_MASKED_TOOLS,
+  mask,
+  StreamUnmasker,
+  toolPolicy,
+  unmask,
+  unmaskDeep,
+  Vault,
+} from '../hooks/masker'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
 const ph = (label: string, n: number) => `<<${label}_${n}>>`
@@ -105,5 +114,29 @@ describe('StreamUnmasker', () => {
     const s = new StreamUnmasker(new Vault())
     expect(s.push('plain text')).toBe('plain text')
     expect(s.push(' x <<NOT A TOKEN')).toBe(' x <<NOT A TOKEN')
+  })
+})
+
+describe('toolPolicy', () => {
+  test('web tools and every MCP tool keep placeholders by default', () => {
+    const keeps = toolPolicy(DEFAULT_MASKED_TOOLS, [])
+    expect(keeps('WebSearch')).toBe(true)
+    expect(keeps('WebFetch')).toBe(true)
+    expect(keeps('mcp__slack__post_message')).toBe(true)
+    expect(keeps('Bash')).toBe(false)
+    expect(keeps('Edit')).toBe(false)
+  })
+
+  test('unmaskedTools exceptions win, with wildcards', () => {
+    const keeps = toolPolicy(DEFAULT_MASKED_TOOLS, ['mcp__local_db__*'])
+    expect(keeps('mcp__local_db__query')).toBe(false)
+    expect(keeps('mcp__slack__post_message')).toBe(true)
+  })
+
+  test('patterns are matched whole and literally apart from *', () => {
+    const keeps = toolPolicy(['mcp__a.b__*'], [])
+    expect(keeps('mcp__a.b__x')).toBe(true)
+    expect(keeps('mcp__aXb__x')).toBe(false)
+    expect(keeps('xmcp__a.b__x')).toBe(false)
   })
 })

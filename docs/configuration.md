@@ -10,7 +10,7 @@ customer-mask reads up to three JSON files and **merges** them:
 | 2 | `~/.claude/customer-mask.json` | your own defaults across all projects |
 | 3 | `<project>/.claude/customer-mask.json` | customers specific to one repository |
 
-`customers` and `patterns` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools` is taken from the last file that sets it.
+`customers` and `patterns` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools` is taken from the last file that sets it, and `unmaskedTools` from all files combined.
 
 Config is read once, when the mod loads. After editing it, start a new session. `/clear` does not reload it.
 
@@ -27,7 +27,8 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
     { "label": "BOOKING", "regex": "\\bbk-[0-9a-f]{6}\\b", "flags": "i" }
   ],
   "detectors": { "email": true, "phone": true, "iban": true, "cpr": true },
-  "maskedTools": ["WebSearch", "WebFetch"]
+  "maskedTools": ["WebSearch", "WebFetch", "mcp__*"],
+  "unmaskedTools": ["mcp__local_db__*"]
 }
 ```
 
@@ -59,9 +60,19 @@ All built-ins are on by default. Set one to `false` to turn it off:
 
 ### `maskedTools`: string[]
 
-Tools whose arguments **keep** their placeholders instead of being restored, because those tools send their arguments to a server. The default is `["WebSearch", "WebFetch"]`. Add MCP tools that call external services, for example `"mcp__slack__post_message"`. Set it to `[]` to restore values for every tool.
+Tools whose arguments **keep** their placeholders instead of being restored, because those tools send their arguments to a server. Entries are tool names or patterns, where `*` matches anything. The default is `["WebSearch", "WebFetch", "mcp__*"]`: the web tools and **every MCP tool**, since an MCP server can forward what it receives anywhere. Setting this replaces the default. `[]` restores values for every tool.
 
-A tool in this list receives the literal text `<<CUSTOMER_1>>`. A web search for it will find nothing useful. That is the intended trade-off.
+A tool in this list receives the literal placeholder text. A web search for it finds nothing useful, and a Slack message posted through MCP shows the placeholder. That is the intended trade-off.
+
+### `unmaskedTools`: string[]
+
+Exceptions to `maskedTools`: tools that get real values even though they match it. Use this for MCP tools that only work on your machine and need real IDs, such as a local database:
+
+```json
+{ "unmaskedTools": ["mcp__local_db__*", "mcp__filesystem__*"] }
+```
+
+Only list a tool here if you know where its server sends data.
 
 ## Keeping the customer list current
 
@@ -81,7 +92,7 @@ See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for d
 
 ```
 customer-mask: active
-Config: 2 customer name(s), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch from /home/me/.claude/customer-mask.json
+Config: 2 customer name(s), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__* from /home/me/.claude/customer-mask.json
 Replaced this session (3):
   <<CUSTOMER_1>>  →  Acme Freight A/S
   <<SHIPMENT_1>>  →  SHP12345678

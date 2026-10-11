@@ -21,6 +21,10 @@
   },
   "maskedTools": [
     "WebSearch",
-    "WebFetch"
+    "WebFetch",
+    "mcp__*"
+  ],
+  "unmaskedTools": [
+    "mcp__local_db__*"
   ]
 }

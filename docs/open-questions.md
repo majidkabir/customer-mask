@@ -11,7 +11,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | ❓ Decision needed |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ⚠️ Known gap |
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ⚠️ Verified edge case |
-| 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ❓ Decision needed |
+| 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
 | 9 | [Is pseudonymisation enough for compliance?](#9-is-pseudonymisation-enough-for-compliance) | Compliance | ❓ Needs legal / DPO |
 | 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ❓ Decision needed |
 | 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ❓ Not measured |
@@ -82,9 +82,9 @@ Any text matching `<<LABEL_n>>` whose token is in the vault is replaced with the
 
 ### 8. Which tools should keep placeholders
 
-By default every tool gets real values except `WebSearch` and `WebFetch`. But **any MCP tool** that talks to an external service (Slack, Jira, a ticketing API) also sends its arguments off the machine.
+**Was:** every tool got real values except `WebSearch` and `WebFetch`, so any MCP tool that talks to an external service (Slack, Jira, a ticketing API) received real customer data.
 
-**Decision:** default-allow (current) or default-deny, i.e. keep placeholders for every MCP tool unless it is listed as local? Default-deny is safer but breaks MCP tools that need real IDs.
+**Fixed (0.2):** default-deny. Every MCP tool (`mcp__*`) keeps its placeholders. Local MCP tools that need real values are listed in [`unmaskedTools`](configuration.md#unmaskedtools-string). Tool lists accept `*` patterns.
 
 ### 9. Is pseudonymisation enough for compliance?
 

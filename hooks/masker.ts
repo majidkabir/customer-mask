@@ -8,12 +8,31 @@ export type MaskConfig = {
   customers?: string[]
   patterns?: PatternConfig[]
   detectors?: { email?: boolean; phone?: boolean; iban?: boolean; cpr?: boolean }
-  /** Tools whose arguments keep their placeholders because they send them off this machine. */
+  /**
+   * Tools whose arguments keep their placeholders because they send them off
+   * this machine. Names or patterns with `*`; replaces the default list.
+   */
   maskedTools?: string[]
+  /** Exceptions to `maskedTools`: tools that get real values even though they match it. */
+  unmaskedTools?: string[]
 }
 
-/** By default, tools that send their arguments to a server keep placeholders in them. */
-export const DEFAULT_MASKED_TOOLS = ['WebSearch', 'WebFetch']
+/**
+ * By default every tool that can send its arguments to a server keeps
+ * placeholders: the web tools and every MCP tool. Local MCP tools that need
+ * real values are listed in `unmaskedTools`.
+ */
+export const DEFAULT_MASKED_TOOLS = ['WebSearch', 'WebFetch', 'mcp__*']
+
+const globToRegex = (glob: string) =>
+  new RegExp(`^${glob.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`)
+
+/** Decides, per tool name, whether its arguments keep their placeholders. */
+export function toolPolicy(masked: readonly string[], unmasked: readonly string[]): (tool: string) => boolean {
+  const keep = masked.map(globToRegex)
+  const allow = unmasked.map(globToRegex)
+  return tool => keep.some(r => r.test(tool)) && !allow.some(r => r.test(tool))
+}
 
 type Rule = {
   label: string
@@ -21,7 +40,7 @@ type Rule = {
   normalize: (value: string) => string
 }
 
-/** A placeholder as it appears in text the model reads: <<CUSTOMER_1>>. */
+/** A placeholder as it appears in text the model reads. */
 const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+)>>/g
 
 const exact = (v: string) => v

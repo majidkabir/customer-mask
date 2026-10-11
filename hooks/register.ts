@@ -8,6 +8,7 @@ import {
   mask,
   StreamUnmasker,
   SYSTEM_NOTE,
+  toolPolicy,
   unmaskDeep,
   Vault,
   type MaskConfig,
@@ -38,7 +39,9 @@ const vaultAtom = atom({ plugin: 'customer-mask', key: 'vault' } as const, [] as
 const vault = new Vault()
 let rules = buildRules({})
 let configSummary = 'not loaded'
-let maskedTools = new Set(DEFAULT_MASKED_TOOLS)
+let maskedList: readonly string[] = DEFAULT_MASKED_TOOLS
+let unmaskedList: readonly string[] = []
+let keepsPlaceholders = toolPolicy(DEFAULT_MASKED_TOOLS, [])
 /** Set when masking failed: from then on no request leaves this session. */
 let blocked: string | undefined
 let loading: Promise<void> | undefined
@@ -56,6 +59,7 @@ async function load($: EngineInterface): Promise<void> {
   const patterns: NonNullable<MaskConfig['patterns']> = []
   let detectors: MaskConfig['detectors'] = {}
   let toolList: string[] | undefined
+  const exceptions: string[] = []
   const sources: string[] = []
 
   const candidates: string[] = []
@@ -78,6 +82,7 @@ async function load($: EngineInterface): Promise<void> {
       patterns.push(...(part.patterns ?? []))
       detectors = { ...detectors, ...part.detectors }
       if (part.maskedTools) toolList = part.maskedTools
+      exceptions.push(...(part.unmaskedTools ?? []))
       sources.push(path)
     } catch (err) {
       blocked = `${path} is not valid JSON (${String(err)}). Fix it, then restart the session.`
@@ -90,13 +95,16 @@ async function load($: EngineInterface): Promise<void> {
     blocked = `a pattern in the customer-mask config does not compile (${String(err)}).`
   }
 
-  maskedTools = new Set(toolList ?? DEFAULT_MASKED_TOOLS)
+  maskedList = toolList ?? DEFAULT_MASKED_TOOLS
+  unmaskedList = exceptions
+  keepsPlaceholders = toolPolicy(maskedList, unmaskedList)
   vault.load(await read($, vaultAtom), rules)
   await reserveFromTranscript($)
 
   configSummary =
     `${customers.length} customer name(s), ${patterns.length} custom pattern(s), ` +
-    `tools kept masked: ${[...maskedTools].join(', ') || 'none'}` +
+    `tools kept masked: ${maskedList.join(', ') || 'none'}` +
+    (unmaskedList.length ? ` except ${unmaskedList.join(', ')}` : '') +
     (sources.length ? ` from ${sources.join(', ')}` : ' (no config file found; built-in detectors only)')
 }
 
@@ -199,10 +207,11 @@ export const register: Register = on => {
 
   // The model's tool calls: restore real values in the arguments before the
   // permission prompt and the tool see them, except for tools that would send
-  // them off this machine (maskedTools), which keep their placeholders.
+  // them off this machine (maskedTools: the web tools and every MCP tool by
+  // default), which keep their placeholders.
   on('tool.call', async ($, e, next) => {
     await ready($)
-    return next(maskedTools.has(String(e.tool)) ? e : unmaskDeep(e, vault, TOOL_ENVELOPE))
+    return next(keepsPlaceholders(String(e.tool)) ? e : unmaskDeep(e, vault, TOOL_ENVELOPE))
   }).catch(($, e, next) =>
     next.called ? next(e) : { deny: `${NAME} could not restore the customer data in this call's arguments; retry it.` },
   )
