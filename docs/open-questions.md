@@ -5,9 +5,9 @@ Known gaps found while building and testing, and decisions that still need an ow
 | # | Topic | Kind | Status |
 | --- | --- | --- | --- |
 | 1 | [Headless session title is generated from the raw prompt](#1-headless-session-title-is-generated-from-the-raw-prompt) | Leak | ⚠️ Verified gap, partly mitigated |
-| 2 | [Headless final result text stays masked](#2-headless-final-result-text-stays-masked) | UX | ⚠️ Verified gap |
+| 2 | [Headless final result text stays masked](#2-headless-final-result-text-stays-masked) | UX | ✅ Fixed in 0.3 (`tools/unmask.mjs`) |
 | 3 | [Raw prompt in the local transcript's queue record](#3-raw-prompt-in-the-local-transcripts-queue-record) | Local storage | ⚠️ Verified gap |
-| 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ❓ Decision needed |
+| 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ✅ Fixed in 0.3 (beside the session) |
 | 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | 🟡 Variants fixed in 0.2; NER open |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ✅ Fixed in 0.2 |
@@ -40,7 +40,14 @@ Known gaps found while building and testing, and decisions that still need an ow
 
 A `turn.complete` hook was tried. It can only add text *beneath* the answer, never replace the recorded result, so it would show the answer twice in interactive mode.
 
-**Options:** post-process headless output with the vault (it would need exporting, see #4), or accept that headless callers see placeholders.
+**Fixed (0.3):** with the placeholder table saved beside the session (#4), headless output can be restored afterwards on your machine:
+
+```bash
+claude -p "..." --output-format json | node tools/unmask.mjs          # the result text
+claude -p "..." --output-format json | node tools/unmask.mjs --json   # the whole JSON
+```
+
+Verified live. A mod still can't change what `claude -p` prints by itself, so the pipe is needed.
 
 ### 3. Raw prompt in the local transcript's queue record
 
@@ -50,12 +57,15 @@ The transcript file holds one `queue-operation` record with the raw first prompt
 
 ### 4. Vault persistence across restarts
 
-The vault lives in memory (mirrored to the session's `$.state`). After `claude --resume` in a **new process**, the old placeholder → value table is gone:
+**Was:** the table lived in memory only. After `claude --resume` in a new process, old placeholders in the conversation couldn't be restored.
 
-- ✅ Handled: placeholder numbers already in the transcript are reserved, so new values never collide with old ones.
-- ❌ Not handled: old placeholders in the resumed conversation can't be restored, so Claude and you see `<<CUSTOMER_1>>` where it used to be a real name.
+**Fixed (0.3):** the table is saved as `<session-id>.customer-mask.json` beside the session's transcript in `~/.claude/projects/<project>/`. On start or resume the mod adopts that file's marker and entries, so the transcript's placeholders resolve again and numbering continues. `/clear` starts a new table. Verified live: a session resumed in a new process ran a command using a customer name it only knew as a placeholder from the earlier turn, and the command got the real value.
 
-**Decision:** should the vault be persisted locally (e.g. `$.store`, encrypted with an OS-keychain key) so resume keeps working? That stores customer data on disk, though no more than the project files already do.
+**Trade-offs to know:**
+- The file holds **real values in plain text**, with the same protection as the transcript and project files: your user account's file permissions. No encryption is used, because a mod has no key store, and a key kept beside the file would add nothing.
+- Claude Code's automatic cleanup of old transcripts may not remove this file. Delete `~/.claude/projects/*/*.customer-mask.json` along with old sessions if that matters.
+- `--fork-session` in a new process starts without the parent's table; placeholders from before the fork stay as placeholders.
+- An unreadable or corrupt file blocks the session rather than guessing.
 
 ### 5. Recall: customers not in the list
 

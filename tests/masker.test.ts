@@ -6,11 +6,13 @@ import {
   DEFAULT_MASKED_TOOLS,
   mask,
   newMarker,
+  parseVaultFile,
   StreamUnmasker,
   toolPolicy,
   unmask,
   unmaskDeep,
   Vault,
+  vaultFileFor,
 } from '../hooks/masker'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
@@ -255,5 +257,19 @@ describe('compareVersions', () => {
     expect(compareVersions('2.1.1000', '2.1.296')).toBe(1)
     expect(compareVersions('2.2.0-dev.20261101', '2.1.296')).toBe(1)
     expect(compareVersions('3', '2.9.9')).toBe(1)
+  })
+})
+
+describe('vault file', () => {
+  test('sits beside the transcript', () => {
+    expect(vaultFileFor('/h/.claude/projects/-p/abc.jsonl')).toBe('/h/.claude/projects/-p/abc.customer-mask.json')
+  })
+
+  test('round-trips, and rejects anything else', () => {
+    const data = { version: 1, marker: 'abcd', entries: [{ token: 'EMAIL_1', value: 'a@b.dk', label: 'EMAIL' }] }
+    expect(parseVaultFile(JSON.stringify(data))).toEqual(data)
+    expect(() => parseVaultFile('{"version":2,"marker":"x","entries":[]}')).toThrow()
+    expect(() => parseVaultFile('{"version":1,"marker":"x","entries":[{"token":1}]}')).toThrow()
+    expect(() => parseVaultFile('nope')).toThrow()
   })
 })

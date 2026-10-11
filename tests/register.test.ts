@@ -20,6 +20,8 @@ type World = {
   sections?: { id: string; text: string; scope: 'shared' | 'session' }[]
   history?: { role: 'user' | 'assistant'; text: string; toolUses: never[] }[]
   version?: string
+  /** The conversation is not readable yet (early in a headless start). */
+  historyUnavailable?: boolean
 }
 
 /**
@@ -29,7 +31,7 @@ type World = {
  */
 function world(on: On, w: World = {}) {
   const files = w.files ?? { '/proj/.claude/customer-mask.json': CONFIG }
-  const seen = { requestSent: false, ran: '' }
+  const seen = { requestSent: false, ran: '', writes: {} as Record<string, string> }
 
   mock.env(on, { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/proj' }))
@@ -38,6 +40,14 @@ function world(on: On, w: World = {}) {
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
   })
   on('ui.status', () => ({ value: undefined }))
+  on('ui.invalidate', () => ({ value: undefined }))
+  on('fs.exists', ($, e) => ({ value: e.path in files }))
+  on('fs.write', ($, e) => {
+    seen.writes[e.path] = e.text
+    files[e.path] = e.text
+    return { value: undefined }
+  })
+  on('classic.SessionStart', () => ({}))
   on('turn.step', async function* () {
     seen.requestSent = true
     const reply = typeof w.reply === 'function' ? w.reply() : (w.reply ?? [])
@@ -52,7 +62,9 @@ function world(on: On, w: World = {}) {
   })
   on('prompt.compose', () => ({ sections: w.sections ?? [] }))
   on('classic.UserPromptSubmit', () => ({}))
-  on('session.messages', () => ({ value: w.history ?? [] }))
+  on('session.messages', () =>
+    w.historyUnavailable ? { deny: 'no session is bound in this process' } : { value: w.history ?? [] },
+  )
   on('session.version', () => ({ value: { version: w.version ?? '2.1.296' } }))
   return seen
 }
@@ -127,6 +139,68 @@ describe('failing closed', () => {
     const text = JSON.stringify(stored.message?.content)
     expect(text).not.toContain('Acme')
     expect(text).toContain('could not check this content')
+  })
+})
+
+const TRANSCRIPT = '/home/u/.claude/projects/-proj/s1.jsonl'
+const VAULT_FILE = '/home/u/.claude/projects/-proj/s1.customer-mask.json'
+
+describe('vault beside the session', () => {
+  test('placeholders are saved beside the transcript', async ($, on) => {
+    const seen = world(on)
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    await appendPrompt($, 'Acme Freight A/S')
+    const saved = JSON.parse(seen.writes[VAULT_FILE] ?? '{}')
+    expect(saved.version).toBe(1)
+    expect(saved.marker).toMatch(/^[a-z0-9]{4}$/)
+    expect(saved.entries).toEqual([{ token: 'CUSTOMER_1', value: 'Acme Freight A/S', label: 'CUSTOMER' }])
+  })
+
+  test('a resumed session restores its placeholders and continues the numbering', async ($, on) => {
+    const vaultFile = JSON.stringify({
+      version: 1,
+      marker: 'abcd',
+      entries: [{ token: 'CUSTOMER_1', value: 'Acme Freight A/S', label: 'CUSTOMER' }],
+    })
+    const config = JSON.stringify({ customers: ['Acme Freight A/S', 'Nordic Widgets'] })
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config, [VAULT_FILE]: vaultFile } })
+    await $.classic.SessionStart({ source: 'resume', transcript_path: TRANSCRIPT } as never)
+
+    await $.tool.call({ tool: 'Bash', command: `echo ${ph('CUSTOMER', 1, 'abcd')}` } as never)
+    expect(seen.ran).toBe('echo Acme Freight A/S')
+
+    const stored = await appendPrompt($, 'Acme Freight A/S and Nordic Widgets')
+    expect(JSON.stringify(stored.message?.content)).toContain(`${ph('CUSTOMER', 1, 'abcd')} and ${ph('CUSTOMER', 2, 'abcd')}`)
+  })
+
+  test('/clear starts a new table: old placeholders no longer resolve', async ($, on) => {
+    const vaultFile = JSON.stringify({
+      version: 1,
+      marker: 'abcd',
+      entries: [{ token: 'CUSTOMER_1', value: 'Acme Freight A/S', label: 'CUSTOMER' }],
+    })
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': CONFIG, [VAULT_FILE]: vaultFile } })
+    await $.classic.SessionStart({ source: 'resume', transcript_path: TRANSCRIPT } as never)
+    await $.classic.SessionStart({ source: 'clear', transcript_path: '/home/u/.claude/projects/-proj/s2.jsonl' } as never)
+    await $.tool.call({ tool: 'Bash', command: `echo ${ph('CUSTOMER', 1, 'abcd')}` } as never)
+    expect(seen.ran).toBe(`echo ${ph('CUSTOMER', 1, 'abcd')}`)
+  })
+
+  test('an unreadable vault file blocks the session instead of guessing', async ($, on) => {
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': CONFIG, [VAULT_FILE]: '{ broken' } })
+    await $.classic.SessionStart({ source: 'resume', transcript_path: TRANSCRIPT } as never)
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
+    expect(seen.requestSent).toBe(false)
+    expect(textOf(chunks)).toContain('vault file')
+  })
+})
+
+describe('early in a headless start', () => {
+  test('an unreadable conversation does not block the session', async ($, on) => {
+    const seen = world(on, { historyUnavailable: true })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
+    expect(seen.requestSent).toBe(true)
   })
 })
 

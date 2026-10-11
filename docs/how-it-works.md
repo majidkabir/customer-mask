@@ -136,8 +136,8 @@ flowchart LR
 - **One number per customer, one token per spelling:** `Acme Freight A/S`, `ACME FREIGHT` and `acme-freight` are all customer 1, written `CUSTOMER_1`, `CUSTOMER_1-2` and `CUSTOMER_1-3`. Claude can tell they are the same customer, and each is restored **exactly as it was written**. That matters for Claude's Edit tool, which must find the original text in the file. (Before 0.2, spellings differing only in case shared one token, so an edit could restore the wrong spelling and fail.) Phone numbers and IBANs treat separators the same way, and emails treat case the same way.
 - **Stable:** the same spelling always gets the same placeholder within a session. Claude can reason across turns ("CUSTOMER_1 again"), and the prompt cache stays warm because earlier messages never change.
 - **Idempotent:** text that already contains placeholders is never masked again.
-- **Where it lives:** in memory, mirrored to the session's `$.state` so it survives a hot reload of the mod. It is **not** written to disk by the mod. The transcript holds placeholders only.
-- **Resumed sessions:** on start, the mod scans the conversation for placeholders already in use and reserves their numbers. A new customer can never get `CUSTOMER_1` if the resumed transcript already uses it for someone else. The old values themselves are gone after a restart, so old placeholders stay visible as placeholders. See [open questions](open-questions.md#4-vault-persistence-across-restarts).
+- **Where it lives:** in memory (mirrored to the session's `$.state`, so it survives a hot reload of the mod), and in a file beside the session's transcript: `~/.claude/projects/<project>/<session-id>.customer-mask.json`. That file holds the marker and the real values in plain text. The transcript itself holds placeholders only. See [open questions #4](open-questions.md#4-vault-persistence-across-restarts) for the trade-offs.
+- **Resumed sessions:** on start or resume, the mod reads that file and adopts its marker and entries, so every placeholder in the resumed conversation resolves again and numbering continues. It also reserves any placeholder numbers the conversation uses that the file lacks. `/clear` starts a new conversation with a new table.
 
 ## 5. Detection
 
@@ -211,4 +211,4 @@ When blocked, the status line shows `🔒 customer-mask: BLOCKED`, and `/custome
 - Tool output on screen (a file Claude read) shows real values, while the model gets the masked copy.
 - Claude's reply is unmasked by `turn.step` as it streams, so you read real values. The stored copy is masked again by `session.append`.
 
-The one place this breaks down is **headless** output: `claude -p` and the SDK return the *stored* final message, which is masked. See [open questions](open-questions.md#2-headless-final-result-text-stays-masked).
+The one place this breaks down is **headless** output: `claude -p` and the SDK return the *stored* final message, which is masked. Pipe it through `tools/unmask.mjs` to restore it (see [open questions #2](open-questions.md#2-headless-final-result-text-stays-masked)).

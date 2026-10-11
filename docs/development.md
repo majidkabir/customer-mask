@@ -18,6 +18,8 @@ customer-mask/
 │   ├── register.test.ts     # hooks driven through the real Claude Code engine
 │   └── scale.test.ts        # timing with large customer lists and 1 MB inputs
 ├── docs/
+├── tools/
+│   └── unmask.mjs           # restores real values in claude -p output, from the saved table
 ├── customer-mask.example.json
 └── .github/workflows/test.yml
 ```
@@ -60,7 +62,7 @@ When writing tests, build placeholder strings at run time (`` `<<${label}_${n}>>
 
 ## What has been verified
 
-Besides the automated tests (54, including `tests/scale.test.ts`, which fails if masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model with Claude Code 2.1.296.
+Besides the automated tests (61, including `tests/scale.test.ts`, which fails if masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model with Claude Code 2.1.296.
 
 | Check | Result |
 | --- | --- |
@@ -69,7 +71,8 @@ Besides the automated tests (54, including `tests/scale.test.ts`, which fails if
 | Model asked for `echo "<<CUSTOMER_1>> / <<SHIPMENT_1>>" > out.txt`; content of `out.txt` | `Acme Freight A/S / SHP12345678` ✅ |
 | User and tool rows in the saved transcript containing a real value | 0 ✅ |
 | Automatic session title (headless) | ⚠️ generated from the raw prompt ([#1](open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt)) |
-| `claude -p` final result text | ⚠️ masked ([#2](open-questions.md#2-headless-final-result-text-stays-masked)) |
+| `claude -p` final result text | masked; `tools/unmask.mjs` restores it ✅ |
+| Session resumed in a new process uses a placeholder from the earlier turn in a command | real value ✅ |
 
 To reproduce it, put a CSV and a `.claude/customer-mask.json` in an empty folder, then:
 

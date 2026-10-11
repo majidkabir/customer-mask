@@ -84,7 +84,8 @@ It shows the config it loaded and every value it has replaced so far. The status
 | `@file` mentions and reminders Claude Code injects | ✅ |
 | Per-session parts of the system prompt (git branch, paths, …) | ✅ |
 | Subagents' conversations | ✅ |
-| The transcript saved on disk (`~/.claude/projects/…`) | ✅ placeholders only |
+| The transcript saved on disk (`~/.claude/projects/…`) | ✅ placeholders only; the placeholder table is saved beside it so resumed sessions keep working |
+| `claude -p` / SDK output | 🟡 masked; restore it with `… --output-format json \| node tools/unmask.mjs` |
 | Arguments of `WebSearch`, `WebFetch` and every MCP tool (they can leave your machine) | ✅ kept masked; local MCP tools can be exempted |
 | Automatic session title in **headless** runs (`claude -p`, SDK) | ❌ see [open questions](docs/open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt) |
 | Images and PDFs | ✅ removed before sending; Claude is told why (configurable) |
@@ -102,4 +103,4 @@ If anything goes wrong, the mod fails closed. A broken config or an old Claude C
 
 ## Status
 
-Version 0.2, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.3, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.

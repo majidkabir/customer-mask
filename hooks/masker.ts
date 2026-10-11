@@ -46,6 +46,28 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
+/** The vault file beside a session's transcript: `<session-id>.customer-mask.json`. */
+export function vaultFileFor(transcriptPath: string): string {
+  return `${transcriptPath.replace(/\.jsonl$/, '')}.customer-mask.json`
+}
+
+/** What the vault file holds. */
+export type VaultFile = { version: 1; marker: string; entries: VaultEntry[] }
+
+/** Reads a vault file's text; throws when it is not one. */
+export function parseVaultFile(text: string): VaultFile {
+  const data = JSON.parse(text) as Partial<VaultFile>
+  if (data.version !== 1 || typeof data.marker !== 'string' || !Array.isArray(data.entries)) {
+    throw new Error('not a customer-mask vault file (version 1)')
+  }
+  for (const e of data.entries) {
+    if (typeof e?.token !== 'string' || typeof e.value !== 'string' || typeof e.label !== 'string') {
+      throw new Error('a vault entry is malformed')
+    }
+  }
+  return data as VaultFile
+}
+
 export const UNCHECKED_NOTE =
   '[customer-mask could not check this content for customer data in time, so it was removed before it was ' +
   'stored or sent. Ask the user for a smaller excerpt.]'

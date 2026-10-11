@@ -10,6 +10,9 @@ import {
   compareVersions,
   MEDIA_BLOCKS,
   MIN_CLAUDE_CODE,
+  parseVaultFile,
+  vaultFileFor,
+  type VaultFile,
   MEDIA_NOTE,
   UNCHECKED_NOTE,
   newMarker,
@@ -52,6 +55,8 @@ let keepsPlaceholders = toolPolicy(DEFAULT_MASKED_TOOLS, [])
 let dropMedia = true
 let mediaDropped = 0
 let rowsRemoved = 0
+/** The vault file beside this session's transcript, once the session's transcript is known. */
+let sessionFile: string | undefined
 /** Set when masking failed: from then on no request leaves this session. */
 let blocked: string | undefined
 let loading: Promise<void> | undefined
@@ -140,9 +145,19 @@ async function load($: EngineInterface): Promise<void> {
     (sources.length ? ` from ${sources.join(', ')}` : ' (no config file found; built-in detectors only)')
 }
 
-/** Reserves every placeholder number a resumed conversation already uses. */
+/**
+ * Reserves every placeholder number a resumed conversation already uses. Best
+ * effort: early in a headless start the conversation is not readable yet, and
+ * session.start runs this again once it is.
+ */
 async function reserveFromTranscript($: EngineInterface): Promise<void> {
-  for (const m of await $.session.messages()) {
+  let messages: Awaited<ReturnType<EngineInterface['session']['messages']>>
+  try {
+    messages = await $.session.messages()
+  } catch {
+    return
+  }
+  for (const m of messages) {
     vault.reserve(m.text)
     for (const r of m.toolResults ?? []) vault.reserve(r.text ?? '')
     for (const u of m.toolUses) vault.reserve(JSON.stringify(u))
@@ -150,7 +165,60 @@ async function reserveFromTranscript($: EngineInterface): Promise<void> {
 }
 
 async function persist($: EngineInterface, before: number): Promise<void> {
-  if (vault.size !== before) await update($, vaultAtom, () => vault.entries())
+  if (vault.size === before) return
+  await update($, vaultAtom, () => vault.entries())
+  await writeVaultFile($)
+}
+
+/** Writes the vault beside the session's transcript, so a resumed session can restore its placeholders. */
+async function writeVaultFile($: EngineInterface): Promise<void> {
+  if (sessionFile === undefined || vault.size === 0) return
+  const data: VaultFile = { version: 1, marker: vault.marker, entries: vault.entries() }
+  await $.fs.write(sessionFile, JSON.stringify(data, null, 1))
+}
+
+/** Starts this module's vault over: a new marker and no entries. */
+async function freshVault($: EngineInterface): Promise<void> {
+  vault = new Vault(newMarker())
+  await update($, markerAtom, () => vault.marker)
+  await update($, vaultAtom, () => [])
+}
+
+/**
+ * Ties the vault to the session's transcript. On start or resume, a vault file
+ * already beside the transcript is adopted (its marker and entries), so the
+ * placeholders the transcript holds resolve again. /clear starts a new
+ * conversation and a new vault. Anything new is written to the file.
+ */
+async function attach($: EngineInterface, transcriptPath: string, source: string): Promise<void> {
+  const file = vaultFileFor(transcriptPath)
+  if (file === sessionFile) return
+  sessionFile = file
+
+  if (source === 'clear') {
+    await freshVault($)
+  } else if (await $.fs.exists(file)) {
+    let saved: VaultFile
+    try {
+      saved = parseVaultFile(await $.fs.read(file))
+    } catch (err) {
+      blocked = `the vault file ${file} cannot be read (${String(err)}). Move it away and restart the session.`
+      return
+    }
+    // Placeholders minted before the file was found (none, normally) are
+    // dropped; the system prompt and first-message context are re-rendered.
+    const minted = vault.size > 0 && vault.marker !== saved.marker
+    vault = new Vault(saved.marker)
+    vault.load(saved.entries, rules)
+    await update($, markerAtom, () => vault.marker)
+    await update($, vaultAtom, () => vault.entries())
+    if (minted) {
+      await $.ui.invalidate('prompt.context')
+      await $.ui.invalidate('prompt.section')
+    }
+  }
+  await reserveFromTranscript($)
+  await writeVaultFile($)
 }
 
 function maskText(text: string): string {
@@ -231,6 +299,7 @@ export const register: Register = on => {
   // the prompt never leaves unmasked; the title is the masked prompt's start.
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await ready($)
+    if (sessionFile === undefined && e.agent_id === undefined) await attach($, e.transcript_path, 'startup')
     const before = vault.size
     const result = await next(e)
     const title = result.sessionTitle ?? maskText(e.prompt).replace(/\s+/g, ' ').trim().slice(0, 60)
@@ -318,6 +387,13 @@ export const register: Register = on => {
     return masked
   })
 
+  // Where the session's transcript is: the vault file goes beside it.
+  on('classic.SessionStart', async ($, e, next) => {
+    await ready($)
+    if (e.agent_id === undefined) await attach($, e.transcript_path, e.source)
+    return next(e)
+  })
+
   on('session.start', async ($, e, next) => {
     await ready($)
     await reserveFromTranscript($)
@@ -338,6 +414,7 @@ export const register: Register = on => {
         `Config: ${configSummary}`,
         `Images/PDFs removed this session: ${mediaDropped}`,
         `Rows removed because masking failed: ${rowsRemoved}`,
+        `Placeholder table saved to: ${sessionFile ?? 'not yet (no transcript known)'}`,
         rows.length ? `Replaced this session (${rows.length}):\n${rows.join('\n')}` : 'Nothing replaced yet.',
       ].join('\n'),
     }
