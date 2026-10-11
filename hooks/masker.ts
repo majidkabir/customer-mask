@@ -15,7 +15,16 @@ export type MaskConfig = {
   maskedTools?: string[]
   /** Exceptions to `maskedTools`: tools that get real values even though they match it. */
   unmaskedTools?: string[]
+  /** Images and PDFs: `drop` (default) removes them before they are sent; `allow` sends them unmasked. */
+  media?: 'drop' | 'allow'
 }
+
+/** Content block kinds that carry pixels or a document, which text masking cannot see into. */
+export const MEDIA_BLOCKS = new Set(['image', 'document'])
+
+export const MEDIA_NOTE =
+  '[customer-mask removed an image or PDF here: media cannot be checked for customer data, so it is not sent. ' +
+  'Ask the user to describe it, or to extract its text into a file.]'
 
 /**
  * By default every tool that can send its arguments to a server keeps

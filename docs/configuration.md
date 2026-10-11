@@ -28,7 +28,8 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
   ],
   "detectors": { "email": true, "phone": true, "iban": true, "cpr": true },
   "maskedTools": ["WebSearch", "WebFetch", "mcp__*"],
-  "unmaskedTools": ["mcp__local_db__*"]
+  "unmaskedTools": ["mcp__local_db__*"],
+  "media": "drop"
 }
 ```
 
@@ -73,6 +74,15 @@ Exceptions to `maskedTools`: tools that get real values even though they match i
 ```
 
 Only list a tool here if you know where its server sends data.
+
+### `media`: "drop" | "allow"
+
+What happens to images and PDFs (screenshots, scanned invoices, pasted pictures). Text masking can't see inside them.
+
+- `drop` (default): they are removed before anything is stored or sent, and Claude gets a note that they were removed.
+- `allow`: they are sent as they are. Only use this if you're sure no image in the project shows customer data.
+
+Any other value blocks the session.
 
 ## Keeping the customer list current
 

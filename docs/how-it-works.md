@@ -106,7 +106,7 @@ All hooks are in [`hooks/register.ts`](../hooks/register.ts). The masking logic 
 
 | Event | Direction | What it does |
 | --- | --- | --- |
-| `session.append` | mask | Fires once for **every row** a conversation stores: prompts, tool results, model responses, notices, subagent rows. Text blocks and `tool_result` contents are masked. What it returns is what is stored on disk **and** what the next request sends. |
+| `session.append` | mask | Fires once for **every row** a conversation stores: prompts, tool results, model responses, notices, subagent rows. Text blocks and `tool_result` contents are masked. Image and PDF blocks are removed, with a note in their place. What it returns is what is stored on disk **and** what the next request sends. |
 | `prompt.context` | mask | Masks the context blocks of the first message (`CLAUDE.md`, etc.). |
 | `prompt.attachment` | mask | Masks text Claude Code injects on its own (an `@file` mention, reminders). |
 | `prompt.compose` | mask | Masks the per-session sections of the system prompt (git status, paths) and appends a note telling Claude how to use placeholders. Shared sections are left untouched so the cross-user prompt cache still hits. |

@@ -87,7 +87,7 @@ It shows the config it loaded and every value it has replaced so far. The status
 | The transcript saved on disk (`~/.claude/projects/…`) | ✅ placeholders only |
 | Arguments of `WebSearch`, `WebFetch` and every MCP tool (they can leave your machine) | ✅ kept masked; local MCP tools can be exempted |
 | Automatic session title in **headless** runs (`claude -p`, SDK) | ❌ see [open questions](docs/open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt) |
-| Images and PDFs | ❌ text only |
+| Images and PDFs | ✅ removed before sending; Claude is told why (configurable) |
 | Customer names that are in neither your list nor a pattern | ❌ detection is list- and pattern-based |
 
 If masking ever fails (a broken config, an exception), the mod **blocks** further requests in that session instead of sending unmasked data.

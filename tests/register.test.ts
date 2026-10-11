@@ -174,6 +174,58 @@ describe('tools that send data off the machine', () => {
   })
 })
 
+const IMAGE = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } }
+const PDF = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0=' } }
+
+describe('images and PDFs', () => {
+  test('an image a tool returns is replaced with a note', async ($, on) => {
+    world(on)
+    const stored = await $.session.append({
+      message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: [IMAGE] }] },
+      door: 'tool-result',
+      origin: { kind: 'tool', tool: 'Read' },
+      uuid: 'm1',
+    } as never)
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).not.toContain('"image"')
+    expect(text).toContain('customer-mask removed an image or PDF')
+  })
+
+  test('an image or PDF pasted into a prompt is dropped and the prompt text notes it', async ($, on) => {
+    world(on)
+    const stored = await $.session.append({
+      message: { type: 'user', role: 'user', content: [IMAGE, PDF, { type: 'text', text: 'What does this say?' }] },
+      door: 'prompt',
+      origin: { kind: 'user' },
+      uuid: 'm2',
+    } as never)
+    const blocks = stored.message?.content ?? []
+    expect(blocks.map(b => b.type)).toEqual(['text'])
+    expect(String(blocks[0]?.text)).toContain('What does this say?')
+    expect(String(blocks[0]?.text)).toContain('customer-mask removed an image or PDF')
+  })
+
+  test('media: "allow" sends them through', async ($, on) => {
+    const config = JSON.stringify({ customers: ['Acme Freight A/S'], media: 'allow' })
+    world(on, { files: { '/proj/.claude/customer-mask.json': config } })
+    const stored = await $.session.append({
+      message: { type: 'user', role: 'user', content: [IMAGE, { type: 'text', text: 'hi' }] },
+      door: 'prompt',
+      origin: { kind: 'user' },
+      uuid: 'm3',
+    } as never)
+    expect((stored.message?.content ?? []).map(b => b.type)).toEqual(['image', 'text'])
+  })
+
+  test('an invalid media value blocks the session', async ($, on) => {
+    const config = JSON.stringify({ media: 'sometimes' })
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config } })
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
+    expect(seen.requestSent).toBe(false)
+    expect(textOf(chunks)).toContain('media must be')
+  })
+})
+
 describe('MCP tools', () => {
   test('an MCP tool keeps its placeholders by default', async ($, on) => {
     const seen = world(on)

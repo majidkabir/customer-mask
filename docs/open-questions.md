@@ -9,7 +9,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 3 | [Raw prompt in the local transcript's queue record](#3-raw-prompt-in-the-local-transcripts-queue-record) | Local storage | ⚠️ Verified gap |
 | 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ❓ Decision needed |
 | 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | ❓ Decision needed |
-| 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ⚠️ Known gap |
+| 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ⚠️ Verified edge case |
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
 | 9 | [Is pseudonymisation enough for compliance?](#9-is-pseudonymisation-enough-for-compliance) | Compliance | ❓ Needs legal / DPO |
@@ -68,9 +68,11 @@ Names are only masked if they are in `customers` or match a pattern. A new custo
 
 ### 6. Images, PDFs and other binary content
 
-Only text blocks and text tool results are masked. An image or a PDF page Claude reads (a screenshot of a customer screen, a scanned invoice) is sent as-is. `session.append` may drop media blocks but cannot change them.
+**Was:** only text was masked. An image or PDF Claude read (a screenshot of a customer screen, a scanned invoice) was sent as-is. In a live test, Claude read the customer name straight off a PNG.
 
-**Options:** drop media blocks entirely when masking is on (safe, but loses capability), or OCR and redact them first (heavy).
+**Fixed (0.2):** image and PDF blocks are removed before they are stored or sent, and Claude gets a note saying why. Inside a tool result the media is replaced by the note. In a prompt the media is dropped and the note is appended to the prompt's text, because a row's own media blocks may only be dropped, not replaced. Verified live: Claude reports the image was removed and offers alternatives. Set [`"media": "allow"`](configuration.md#media-drop--allow) to send media unmasked.
+
+**Still open:** OCR-and-redact, so images can be used safely. That would need a local OCR step and is not planned yet.
 
 ### 7. Placeholder look-alikes in real text
 

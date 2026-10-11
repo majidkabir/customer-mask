@@ -7,6 +7,8 @@ import {
   DEFAULT_MASKED_TOOLS,
   mask,
   StreamUnmasker,
+  MEDIA_BLOCKS,
+  MEDIA_NOTE,
   SYSTEM_NOTE,
   toolPolicy,
   unmaskDeep,
@@ -42,6 +44,8 @@ let configSummary = 'not loaded'
 let maskedList: readonly string[] = DEFAULT_MASKED_TOOLS
 let unmaskedList: readonly string[] = []
 let keepsPlaceholders = toolPolicy(DEFAULT_MASKED_TOOLS, [])
+let dropMedia = true
+let mediaDropped = 0
 /** Set when masking failed: from then on no request leaves this session. */
 let blocked: string | undefined
 let loading: Promise<void> | undefined
@@ -59,6 +63,7 @@ async function load($: EngineInterface): Promise<void> {
   const patterns: NonNullable<MaskConfig['patterns']> = []
   let detectors: MaskConfig['detectors'] = {}
   let toolList: string[] | undefined
+  let media: MaskConfig['media']
   const exceptions: string[] = []
   const sources: string[] = []
 
@@ -83,6 +88,7 @@ async function load($: EngineInterface): Promise<void> {
       detectors = { ...detectors, ...part.detectors }
       if (part.maskedTools) toolList = part.maskedTools
       exceptions.push(...(part.unmaskedTools ?? []))
+      if (part.media) media = part.media
       sources.push(path)
     } catch (err) {
       blocked = `${path} is not valid JSON (${String(err)}). Fix it, then restart the session.`
@@ -98,6 +104,10 @@ async function load($: EngineInterface): Promise<void> {
   maskedList = toolList ?? DEFAULT_MASKED_TOOLS
   unmaskedList = exceptions
   keepsPlaceholders = toolPolicy(maskedList, unmaskedList)
+  if (media !== undefined && media !== 'drop' && media !== 'allow') {
+    blocked = `media must be "drop" or "allow", not ${JSON.stringify(media)}.`
+  }
+  dropMedia = media !== 'allow'
   vault.load(await read($, vaultAtom), rules)
   await reserveFromTranscript($)
 
@@ -105,6 +115,7 @@ async function load($: EngineInterface): Promise<void> {
     `${customers.length} customer name(s), ${patterns.length} custom pattern(s), ` +
     `tools kept masked: ${maskedList.join(', ') || 'none'}` +
     (unmaskedList.length ? ` except ${unmaskedList.join(', ')}` : '') +
+    `, images/PDFs: ${dropMedia ? 'dropped' : 'sent unmasked'}` +
     (sources.length ? ` from ${sources.join(', ')}` : ' (no config file found; built-in detectors only)')
 }
 
@@ -127,6 +138,9 @@ function maskText(text: string): string {
 
 type Block = { type: string; [field: string]: unknown }
 
+const isMedia = (b: Block) => dropMedia && MEDIA_BLOCKS.has(b.type)
+
+/** Masks one block. Inside a tool result, media is replaced with a note (its content is ours to rewrite). */
 function maskBlock(block: Block): Block {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { ...block, text: maskText(block.text) }
@@ -134,9 +148,36 @@ function maskBlock(block: Block): Block {
   if (block.type === 'tool_result') {
     const c = block.content
     if (typeof c === 'string') return { ...block, content: maskText(c) }
-    if (Array.isArray(c)) return { ...block, content: c.map(inner => maskBlock(inner as Block)) }
+    if (Array.isArray(c)) {
+      return {
+        ...block,
+        content: (c as Block[]).map(inner => {
+          if (!isMedia(inner)) return maskBlock(inner)
+          mediaDropped += 1
+          return { type: 'text', text: MEDIA_NOTE }
+        }),
+      }
+    }
   }
   return block
+}
+
+/**
+ * Masks a row's blocks. A row's own media blocks may only be dropped, not
+ * replaced, so the note goes into the row's first text block when it has one.
+ */
+function maskContent(content: readonly Block[]): Block[] {
+  const kept = content.filter(b => !isMedia(b))
+  const dropped = content.length - kept.length
+  if (dropped === 0) return content.map(maskBlock)
+  mediaDropped += dropped
+  let noted = false
+  return kept.map(b => {
+    const masked = maskBlock(b)
+    if (noted || masked.type !== 'text' || typeof masked.text !== 'string') return masked
+    noted = true
+    return { ...masked, text: `${masked.text}\n\n${MEDIA_NOTE}` }
+  })
 }
 
 export const register: Register = on => {
@@ -145,7 +186,7 @@ export const register: Register = on => {
     try {
       await ready($)
       const before = vault.size
-      const content = e.message.content.map(maskBlock)
+      const content = maskContent(e.message.content)
       await persist($, before)
       return next({ ...e, message: { ...e.message, content } })
     } catch (err) {
@@ -264,6 +305,7 @@ export const register: Register = on => {
       text: [
         `${NAME}: ${blocked ? `BLOCKED — ${blocked}` : 'active'}`,
         `Config: ${configSummary}`,
+        `Images/PDFs removed this session: ${mediaDropped}`,
         rows.length ? `Replaced this session (${rows.length}):\n${rows.join('\n')}` : 'Nothing replaced yet.',
       ].join('\n'),
     }

@@ -26,5 +26,6 @@
   ],
   "unmaskedTools": [
     "mcp__local_db__*"
-  ]
+  ],
+  "media": "drop"
 }
