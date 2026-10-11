@@ -122,15 +122,19 @@ The vault is the two-way table between real values and placeholders.
 
 ```mermaid
 flowchart LR
-    A["'Acme Freight A/S'"] --> N1["normalise<br/>lower-case,<br/>collapse spaces"]
-    B["'ACME FREIGHT  A/S'"] --> N1
-    N1 --> K["key: CUSTOMER + 'acme freight a/s'"]
-    K -->|first time| T["new token CUSTOMER_1<br/>(counter per label)"]
-    K -->|seen before| T2["same token CUSTOMER_1"]
+    A["'Acme Freight A/S'"] --> F{"this exact<br/>spelling seen?"}
+    B["'ACME FREIGHT'"] --> F
+    C["'acme-freight'"] --> F
+    F -->|yes| S["its token again"]
+    F -->|no| N["normalise: drop legal suffix,<br/>case, separators<br/>→ 'acmefreight'"]
+    N --> E{"this customer<br/>seen?"}
+    E -->|no| T1["new number<br/>CUSTOMER_1"]
+    E -->|yes| T2["same number, next spelling<br/>CUSTOMER_1-2, CUSTOMER_1-3"]
 ```
 
 - **Format:** `<<LABEL_n.mmmm>>`, e.g. `<<CUSTOMER_1.k3f9>>`. The double angle brackets are rare in real text and code, and survive Markdown, JSON and shell quoting. `mmmm` is a **random marker chosen once per session** (four lowercase letters or digits, kept across hot reloads). Only placeholders carrying this session's marker are ever restored, so text that merely looks like a placeholder (in a template, in code that handles placeholders, or from another session) is left exactly as written. The diagrams on this page leave the marker out for brevity.
-- **Stable:** the same value always gets the same placeholder within a session, whatever its case or spacing (phone numbers and IBANs also ignore separators). Claude can reason across turns ("CUSTOMER_1 again"), and the prompt cache stays warm because earlier messages never change.
+- **One number per customer, one token per spelling:** `Acme Freight A/S`, `ACME FREIGHT` and `acme-freight` are all customer 1, written `CUSTOMER_1`, `CUSTOMER_1-2` and `CUSTOMER_1-3`. Claude can tell they are the same customer, and each is restored **exactly as it was written**. That matters for Claude's Edit tool, which must find the original text in the file. (Before 0.2, spellings differing only in case shared one token, so an edit could restore the wrong spelling and fail.) Phone numbers and IBANs treat separators the same way, and emails treat case the same way.
+- **Stable:** the same spelling always gets the same placeholder within a session. Claude can reason across turns ("CUSTOMER_1 again"), and the prompt cache stays warm because earlier messages never change.
 - **Idempotent:** text that already contains placeholders is never masked again.
 - **Where it lives:** in memory, mirrored to the session's `$.state` so it survives a hot reload of the mod. It is **not** written to disk by the mod. The transcript holds placeholders only.
 - **Resumed sessions:** on start, the mod scans the conversation for placeholders already in use and reserves their numbers. A new customer can never get `CUSTOMER_1` if the resumed transcript already uses it for someone else. The old values themselves are gone after a restart, so old placeholders stay visible as placeholders. See [open questions](open-questions.md#4-vault-persistence-across-restarts).
@@ -145,7 +149,7 @@ Rules run in a fixed order, and the first rule to claim a span wins.
 | 2 | `IBAN` | `DK50 0040 0440 1162 43` and other countries | With or without spaces |
 | 3 | `CPR` | `010190-1234` | Hyphenated only. A bare 10-digit run is too often a timestamp |
 | 4 | *your labels* | your `patterns` regexes | e.g. `SHIPMENT`, `CUSTOMER_NO` |
-| 5 | `CUSTOMER` | names from `customers` | Case-insensitive, whole words only (`Lego` won't match `Legolas`), longest name first |
+| 5 | `CUSTOMER` | names from `customers` | Any case, with or without a legal suffix (`A/S`, `ApS`, `GmbH`, `Ltd`, …), any separator between words (space, hyphen, dot, none). Whole words only (`Lego` won't match `Legolas`). Longest name first. Two-letter suffixes such as `AS` or `Co` only count in that exact case, so *Acme as well* keeps its *as* |
 | 6 | `PHONE` | `+45 12 34 56 78`, `12 34 56 78` | International, or Danish 2-2-2-2 grouping |
 
 Detection is deliberately conservative. A false positive in code (masking a timestamp) changes what Claude sees, so the built-ins aim for precision. Recall for names comes from your list.

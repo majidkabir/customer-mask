@@ -17,6 +17,12 @@ export type MaskConfig = {
   unmaskedTools?: string[]
   /** Images and PDFs: `drop` (default) removes them before they are sent; `allow` sends them unmasked. */
   media?: 'drop' | 'allow'
+  /**
+   * Customer names also match without or with another legal suffix (A/S, ApS,
+   * GmbH, Ltd, ...) and with other separators (space, hyphen, dot, none).
+   * Default true.
+   */
+  nameVariants?: boolean
 }
 
 /** Content block kinds that carry pixels or a document, which text masking cannot see into. */
@@ -47,15 +53,53 @@ type Rule = {
   label: string
   regex: RegExp
   normalize: (value: string) => string
+  /** Gives back part of a match that is not the value (an ambiguous word after a name). */
+  trim?: (match: string) => { value: string; rest: string }
+}
+
+/**
+ * Legal-form suffixes a company name may carry, longest first. The two-letter
+ * ones double as ordinary words ("as", "co"), so they only count in the exact
+ * case written here; the rest match in any case.
+ */
+const LEGAL_SUFFIXES = [
+  'Sp. z o.o.', 'Pty Ltd', 'S.p.A.', 'S.r.l.', 'Limited', 'Corporation', 'GmbH & Co. KG',
+  'GmbH', 'A/S', 'ApS', 'I/S', 'K/S', 'P/S', 'IVS', 'ASA', 'Oyj', 'LLC', 'PLC', 'Inc.', 'Inc',
+  'Ltd.', 'Ltd', 'Corp.', 'Corp', 'S.A.', 'SAS', 'SpA', 'Srl', 'B.V.', 'N.V.', 'A.S.', 'Co.',
+  'AS', 'AB', 'SA', 'AG', 'SE', 'NV', 'BV', 'KG', 'Oy', 'Co',
+]
+const STRICT_CASE_SUFFIXES = new Set(['AS', 'AB', 'SA', 'AG', 'SE', 'NV', 'BV', 'KG', 'Oy', 'Co', 'Co.'])
+const SUFFIX_ALT = LEGAL_SUFFIXES.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*')).join('|')
+const SUFFIX_AT_END = new RegExp(`^(.*?)([\\s,]+(${SUFFIX_ALT}))$`, 'isu')
+const NAME_SEPARATORS = /[\s\-._]+/
+
+/** A company name without its legal-form suffix. */
+function stripSuffix(name: string): string {
+  return SUFFIX_AT_END.exec(name)?.[1] ?? name
+}
+
+/** Splits off a two-letter suffix written in the wrong case: "Acme as well" keeps " as". */
+function trimAmbiguousSuffix(match: string): { value: string; rest: string } {
+  const m = SUFFIX_AT_END.exec(match)
+  if (!m) return { value: match, rest: '' }
+  const written = m[3] ?? ''
+  const canonical = LEGAL_SUFFIXES.find(s => s.toLowerCase() === written.toLowerCase().replace(/\s+/g, ' '))
+  if (canonical && STRICT_CASE_SUFFIXES.has(canonical) && written !== canonical) {
+    return { value: m[1] ?? match, rest: m[2] ?? '' }
+  }
+  return { value: match, rest: '' }
 }
 
 /**
  * A placeholder as it appears in text the model reads: a token (LABEL_n) and,
  * since 0.2, a per-session marker after a dot. The marker means text that only
  * looks like a placeholder (in code, in templates) is never taken for one.
+ * A token is LABEL_n for the first spelling of a value and LABEL_n-k for
+ * other spellings of the same value (another case, suffix or separator), so
+ * every spelling is restored exactly as it was written.
  * Group 1 is the token, group 2 the marker (absent in the legacy form).
  */
-const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+)(?:\.([a-z0-9]{4}))?>>/g
+const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+(?:-\d+)?)(?:\.([a-z0-9]{4}))?>>/g
 
 /** A new per-session marker: four random lowercase letters or digits. */
 export function newMarker(): string {
@@ -111,17 +155,9 @@ export function buildRules(config: MaskConfig): Rule[] {
     })
   }
 
-  const names = (config.customers ?? [])
-    .map(n => n.trim())
-    .filter(n => n.length > 1)
-    .sort((a, b) => b.length - a.length)
+  const names = (config.customers ?? []).map(n => n.trim()).filter(n => n.length > 1)
   if (names.length > 0) {
-    const alternation = names.map(n => escapeRegex(n).replace(/\s+/g, '\\s+')).join('|')
-    rules.push({
-      label: 'CUSTOMER',
-      regex: new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternation})(?![\\p{L}\\p{N}])`, 'giu'),
-      normalize: v => lower(v).replace(/\s+/g, ' '),
-    })
+    rules.push(config.nameVariants === false ? exactNameRule(names) : variantNameRule(names))
   }
 
   if (d.phone) {
@@ -136,16 +172,80 @@ export function buildRules(config: MaskConfig): Rule[] {
   return rules
 }
 
-/** The two-way table between real values and placeholders, for one session. */
+const WORD_BOUNDARY_BEFORE = '(?<![\\p{L}\\p{N}])'
+const WORD_BOUNDARY_AFTER = '(?![\\p{L}\\p{N}])'
+const byLengthDesc = (a: string, b: string) => b.length - a.length
+
+/** Names as listed, any case, any run of whitespace between words. */
+function exactNameRule(names: string[]): Rule {
+  const alternation = [...names].sort(byLengthDesc).map(n => escapeRegex(n).replace(/\s+/g, '\\s+')).join('|')
+  return {
+    label: 'CUSTOMER',
+    regex: new RegExp(`${WORD_BOUNDARY_BEFORE}(?:${alternation})${WORD_BOUNDARY_AFTER}`, 'giu'),
+    normalize: v => lower(v).replace(/\s+/g, ' '),
+  }
+}
+
+/**
+ * Names without their legal suffix, any case, with any separator (or none)
+ * between words, then optionally any legal suffix. A name whose core would be
+ * shorter than three characters is matched as listed.
+ */
+function variantNameRule(names: string[]): Rule {
+  const cores = new Set<string>()
+  const exact = new Set<string>()
+  for (const name of names) {
+    const core = stripSuffix(name).trim()
+    if (core.replace(NAME_SEPARATORS, '').length >= 3) cores.add(core)
+    else exact.add(name)
+  }
+  const coreAlt = [...cores]
+    .sort(byLengthDesc)
+    .map(c => c.split(NAME_SEPARATORS).filter(Boolean).map(escapeRegex).join('[\\s\\-._]*'))
+    .join('|')
+  const exactAlt = [...exact].sort(byLengthDesc).map(n => escapeRegex(n).replace(/\s+/g, '\\s+')).join('|')
+  const parts = [
+    ...(coreAlt ? [`(?:${coreAlt})(?:[\\s,]+(?:${SUFFIX_ALT}))?`] : []),
+    ...(exactAlt ? [`(?:${exactAlt})`] : []),
+  ]
+  return {
+    label: 'CUSTOMER',
+    regex: new RegExp(`${WORD_BOUNDARY_BEFORE}(?:${parts.join('|')})${WORD_BOUNDARY_AFTER}`, 'giu'),
+    normalize: v => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, ''),
+    trim: trimAmbiguousSuffix,
+  }
+}
+
+/** LABEL_n-k → { base: LABEL_n, label, n, k }; k is 1 for the first spelling. */
+function parseToken(token: string): { base: string; label: string; n: number; k: number } {
+  const m = /^(([A-Z][A-Z0-9_]*)_(\d+))(?:-(\d+))?$/.exec(token)
+  if (!m) return { base: token, label: token, n: 0, k: 1 }
+  return { base: m[1] ?? token, label: m[2] ?? token, n: Number(m[3]), k: m[4] ? Number(m[4]) : 1 }
+}
+
+/**
+ * The two-way table between real values and placeholders, for one session.
+ *
+ * A value is an entity (what `normalize` maps it to) written in one exact
+ * spelling. Each entity gets a number; each spelling of it gets its own token,
+ * so restoring gives back exactly what was written (which Claude's Edit tool
+ * needs to find the text again).
+ */
 export class Vault {
-  private byKey = new Map<string, string>()
+  private byForm = new Map<string, string>()
+  private byEntity = new Map<string, string>()
   private byToken = new Map<string, VaultEntry>()
   private counters = new Map<string, number>()
+  private variants = new Map<string, number>()
   /** This session's marker; '' is the legacy form without one. */
   readonly marker: string
 
   constructor(marker = '') {
     this.marker = marker
+  }
+
+  get size() {
+    return this.byToken.size
   }
 
   /** The text that stands for `token` in this session. */
@@ -158,19 +258,24 @@ export class Vault {
     return (marker ?? '') === this.marker ? this.valueOf(token) : undefined
   }
 
-  get size() {
-    return this.byToken.size
-  }
-
   tokenFor(label: string, value: string, normalize: (v: string) => string): string {
-    const key = `${label}\u0000${normalize(value)}`
-    const known = this.byKey.get(key)
+    const formKey = `${label}\u0000${value}`
+    const known = this.byForm.get(formKey)
     if (known !== undefined) return known
 
-    const n = (this.counters.get(label) ?? 0) + 1
-    this.counters.set(label, n)
-    const token = `${label}_${n}`
-    this.byKey.set(key, token)
+    const entityKey = `${label}\u0000${normalize(value)}`
+    let token = this.byEntity.get(entityKey)
+    if (token === undefined) {
+      const n = (this.counters.get(label) ?? 0) + 1
+      this.counters.set(label, n)
+      token = `${label}_${n}`
+      this.byEntity.set(entityKey, token)
+    } else {
+      const k = (this.variants.get(token) ?? 1) + 1
+      this.variants.set(token, k)
+      token = `${token}-${k}`
+    }
+    this.byForm.set(formKey, token)
     this.byToken.set(token, { token, value, label })
     return token
   }
@@ -180,13 +285,12 @@ export class Vault {
    * taken, so new values never reuse a number that means something else there.
    */
   reserve(text: string): void {
-    for (const m of text.matchAll(PLACEHOLDER)) {
-      const token = m[1] ?? ''
-      const cut = token.lastIndexOf('_')
-      const label = token.slice(0, cut)
-      const n = Number(token.slice(cut + 1))
-      if (n > (this.counters.get(label) ?? 0)) this.counters.set(label, n)
-    }
+    for (const m of text.matchAll(PLACEHOLDER)) this.bump(parseToken(m[1] ?? ''))
+  }
+
+  private bump(t: { base: string; label: string; n: number; k: number }): void {
+    if (t.n > (this.counters.get(t.label) ?? 0)) this.counters.set(t.label, t.n)
+    if (t.k > (this.variants.get(t.base) ?? 1)) this.variants.set(t.base, t.k)
   }
 
   valueOf(token: string): string | undefined {
@@ -197,16 +301,17 @@ export class Vault {
     return [...this.byToken.values()]
   }
 
-  /** Restores entries saved earlier (e.g. before a hot reload); the rule's key is rebuilt. */
+  /** Restores entries saved earlier (e.g. before a hot reload); the keys are rebuilt. */
   load(entries: readonly VaultEntry[], rules: readonly Rule[]) {
     for (const entry of entries) {
       if (this.byToken.has(entry.token)) continue
-      const rule = rules.find(r => r.label === entry.label)
-      const normalize = rule?.normalize ?? exact
-      this.byKey.set(`${entry.label}\u0000${normalize(entry.value)}`, entry.token)
+      const t = parseToken(entry.token)
+      const normalize = rules.find(r => r.label === entry.label)?.normalize ?? exact
+      this.byForm.set(`${entry.label}\u0000${entry.value}`, entry.token)
+      const entityKey = `${entry.label}\u0000${normalize(entry.value)}`
+      if (!this.byEntity.has(entityKey)) this.byEntity.set(entityKey, t.base)
       this.byToken.set(entry.token, entry)
-      const n = Number(entry.token.slice(entry.label.length + 1))
-      if (n > (this.counters.get(entry.label) ?? 0)) this.counters.set(entry.label, n)
+      this.bump(t)
     }
   }
 }
@@ -226,7 +331,10 @@ export function mask(text: string, rules: readonly Rule[], vault: Vault): string
   let result = text
   for (const rule of rules) {
     result = outsidePlaceholders(result, plain =>
-      plain.replace(rule.regex, value => vault.format(vault.tokenFor(rule.label, value, rule.normalize))),
+      plain.replace(rule.regex, match => {
+        const { value, rest } = rule.trim ? rule.trim(match) : { value: match, rest: '' }
+        return vault.format(vault.tokenFor(rule.label, value, rule.normalize)) + rest
+      }),
     )
   }
   return result
@@ -280,7 +388,7 @@ export class StreamUnmasker {
 
 function holdFrom(buf: string): number {
   const i = buf.lastIndexOf('<<')
-  if (i >= 0 && buf.length - i <= 72 && /^<<(?:[A-Z][A-Z0-9_]*(?:\.[a-z0-9]{0,4})?)?>?$/.test(buf.slice(i))) return i
+  if (i >= 0 && buf.length - i <= 80 && /^<<(?:[A-Z][A-Z0-9_]*(?:-\d*)?(?:\.[a-z0-9]{0,4})?)?>?$/.test(buf.slice(i))) return i
   if (buf.endsWith('<')) return buf.length - 1
   return buf.length
 }
@@ -291,6 +399,7 @@ export function systemNote(vault: Vault): string {
   const b = vault.format('EMAIL_2')
   return (
     `Customer data in this conversation has been replaced with placeholders such as ${a} or ${b}. ` +
+    `A placeholder with a -2, -3 ... after its number, such as ${vault.format('CUSTOMER_1-2')}, is another spelling of the same value. ` +
     'Use a placeholder exactly as written, including the part after the dot, wherever its real value belongs ' +
     '(prose, code, commands, file edits): it is restored automatically before any tool runs and before the user ' +
     'reads your reply. Never guess, reconstruct or invent the real values, and do not comment on the placeholders unless asked.'

@@ -13,7 +13,7 @@ import {
 } from '../hooks/masker'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
-const ph = (label: string, n: number, marker = '') =>
+const ph = (label: string, n: number | string, marker = '') =>
   marker ? `<<${label}_${n}.${marker}>>` : `<<${label}_${n}>>`
 
 const config = {
@@ -45,13 +45,13 @@ describe('mask / unmask', () => {
     expect(unmask(masked, vault)).toBe(input)
   })
 
-  test('the same value always gets the same placeholder, across calls and case', () => {
+  test('the same spelling always gets the same placeholder; other spellings share its number', () => {
     const rules = buildRules(config)
     const vault = new Vault()
-    const a = mask('Acme Freight A/S', rules, vault)
+    expect(mask('Acme Freight A/S', rules, vault)).toBe(ph('CUSTOMER', 1))
     const b = mask('ACME FREIGHT A/S and Acme Freight A/S', rules, vault)
-    expect(a).toBe('<<CUSTOMER_1>>')
-    expect(b).toBe('<<CUSTOMER_1>> and <<CUSTOMER_1>>')
+    expect(b).toBe(`${ph('CUSTOMER', '1-2')} and ${ph('CUSTOMER', 1)}`)
+    expect(unmask(b, vault)).toBe('ACME FREIGHT A/S and Acme Freight A/S')
   })
 
   test('masking is idempotent: placeholders are never masked again', () => {
@@ -173,6 +173,76 @@ describe('per-session marker', () => {
       const s = new StreamUnmasker(vault)
       const out = s.push(whole.slice(0, cut)) + s.push(whole.slice(cut)) + s.flush()
       expect(out).toBe('Hi Acme Freight A/S!')
+    }
+  })
+})
+
+describe('customer name variants', () => {
+  const rules = buildRules({ customers: ['Acme Freight A/S'] })
+  const masks = (text: string) => mask(text, rules, new Vault())
+
+  test('matches without, or with another, legal suffix', () => {
+    expect(masks('Acme Freight is late')).toBe(`${ph('CUSTOMER', 1)} is late`)
+    expect(masks('Acme Freight ApS')).toBe(ph('CUSTOMER', 1))
+    expect(masks('Acme Freight GmbH')).toBe(ph('CUSTOMER', 1))
+    expect(masks('Acme Freight, Inc.')).toBe(ph('CUSTOMER', 1))
+    expect(masks('Acme Freight AS')).toBe(ph('CUSTOMER', 1))
+  })
+
+  test('matches other separators and case', () => {
+    expect(masks('acme-freight')).toBe(ph('CUSTOMER', 1))
+    expect(masks('ACME.FREIGHT')).toBe(ph('CUSTOMER', 1))
+    expect(masks('AcmeFreight')).toBe(ph('CUSTOMER', 1))
+    expect(masks('acme_freight_id')).toBe(`${ph('CUSTOMER', 1)}_id`)
+  })
+
+  test('a two-letter suffix in the wrong case is an ordinary word and stays', () => {
+    expect(masks('Acme Freight as well')).toBe(`${ph('CUSTOMER', 1)} as well`)
+    expect(masks('Acme Freight co-signed')).toBe(`${ph('CUSTOMER', 1)} co-signed`)
+  })
+
+  test('whole words only', () => {
+    expect(masks('AcmeFreightClient')).toBe('AcmeFreightClient')
+    expect(masks('MegaAcme Freight')).toBe('MegaAcme Freight')
+  })
+
+  test('all spellings are one customer and each is restored exactly', () => {
+    const vault = new Vault()
+    const text = 'Acme Freight A/S, acme-freight and ACME FREIGHT'
+    const masked = mask(text, rules, vault)
+    expect(masked).toBe(`${ph('CUSTOMER', 1)}, ${ph('CUSTOMER', '1-2')} and ${ph('CUSTOMER', '1-3')}`)
+    expect(unmask(masked, vault)).toBe(text)
+  })
+
+  test('a name whose core would be too short is matched only as listed', () => {
+    const r = buildRules({ customers: ['AB A/S'] })
+    expect(mask('AB A/S', r, new Vault())).toBe(ph('CUSTOMER', 1))
+    expect(mask('AB is a word', r, new Vault())).toBe('AB is a word')
+  })
+
+  test('nameVariants: false matches names only as listed', () => {
+    const r = buildRules({ customers: ['Acme Freight A/S'], nameVariants: false })
+    expect(mask('Acme Freight is late', r, new Vault())).toBe('Acme Freight is late')
+    expect(mask('acme freight a/s', r, new Vault())).toBe(ph('CUSTOMER', 1))
+  })
+
+  test('a vault restored after a reload keeps variants and numbering', () => {
+    const v1 = new Vault('k3f9')
+    mask('Acme Freight A/S and ACME FREIGHT', rules, v1)
+    const v2 = new Vault('k3f9')
+    v2.load(v1.entries(), rules)
+    expect(mask('Acme Freight', rules, v2)).toBe(ph('CUSTOMER', '1-3', 'k3f9'))
+    expect(mask('ACME FREIGHT', rules, v2)).toBe(ph('CUSTOMER', '1-2', 'k3f9'))
+    expect(mask('Nordic Widgets', buildRules({ customers: ['Nordic Widgets'] }), v2)).toBe(ph('CUSTOMER', 2, 'k3f9'))
+  })
+
+  test('the stream unmasker handles variant tokens split anywhere', () => {
+    const vault = new Vault('k3f9')
+    mask('Acme Freight A/S and ACME FREIGHT', rules, vault)
+    const whole = `x ${ph('CUSTOMER', '1-2', 'k3f9')} y`
+    for (let cut = 1; cut < whole.length; cut++) {
+      const s = new StreamUnmasker(vault)
+      expect(s.push(whole.slice(0, cut)) + s.push(whole.slice(cut)) + s.flush()).toBe('x ACME FREIGHT y')
     }
   })
 })

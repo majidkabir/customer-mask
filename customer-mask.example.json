@@ -27,5 +27,6 @@
   "unmaskedTools": [
     "mcp__local_db__*"
   ],
-  "media": "drop"
+  "media": "drop",
+  "nameVariants": true
 }

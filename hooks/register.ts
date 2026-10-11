@@ -66,6 +66,7 @@ async function load($: EngineInterface): Promise<void> {
   let detectors: MaskConfig['detectors'] = {}
   let toolList: string[] | undefined
   let media: MaskConfig['media']
+  let nameVariants: boolean | undefined
   const exceptions: string[] = []
   const sources: string[] = []
 
@@ -91,6 +92,7 @@ async function load($: EngineInterface): Promise<void> {
       if (part.maskedTools) toolList = part.maskedTools
       exceptions.push(...(part.unmaskedTools ?? []))
       if (part.media) media = part.media
+      if (part.nameVariants !== undefined) nameVariants = part.nameVariants
       sources.push(path)
     } catch (err) {
       blocked = `${path} is not valid JSON (${String(err)}). Fix it, then restart the session.`
@@ -98,7 +100,7 @@ async function load($: EngineInterface): Promise<void> {
   }
 
   try {
-    rules = buildRules({ customers, patterns, detectors })
+    rules = buildRules({ customers, patterns, detectors, nameVariants })
   } catch (err) {
     blocked = `a pattern in the customer-mask config does not compile (${String(err)}).`
   }

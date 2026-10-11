@@ -29,18 +29,33 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
   "detectors": { "email": true, "phone": true, "iban": true, "cpr": true },
   "maskedTools": ["WebSearch", "WebFetch", "mcp__*"],
   "unmaskedTools": ["mcp__local_db__*"],
-  "media": "drop"
+  "media": "drop",
+  "nameVariants": true
 }
 ```
 
 ### `customers`: string[]
 
-Names to mask. Matching is case-insensitive and whole-word, and any run of spaces in a name matches any run of whitespace in the text. Longer names win over shorter ones (`Acme Freight A/S` before `Acme`). Each distinct name becomes `<<CUSTOMER_n>>`.
+Names to mask. Matching is whole-word and ignores case. By default each name also matches its common variants (see [`nameVariants`](#namevariants-boolean)), so listing `Acme Freight A/S` also catches:
+
+| Written as | Why it matches |
+| --- | --- |
+| `Acme Freight` | legal suffix left out |
+| `Acme Freight ApS`, `Acme Freight GmbH`, `Acme Freight, Inc.` | another legal suffix |
+| `acme-freight`, `ACME.FREIGHT`, `AcmeFreight`, `acme_freight_id` | other separators or none |
+
+All of these are the same customer (`CUSTOMER_1`, `CUSTOMER_1-2`, …), and each is restored exactly as written. Longer names win over shorter ones.
 
 Tips:
 
-- Add the forms people actually write: `Acme Freight A/S`, `Acme Freight`, `AcmeFreight`.
+- Abbreviations and nicknames (`AF`, `Acme`) still need their own entry.
 - Very short or common words (`Shell`, `Apple`, `Target`) will also mask ordinary uses of the word in code and prose. That is safe, but it can confuse Claude. Prefer the full legal name where you can.
+
+### `nameVariants`: boolean
+
+`true` (default): customer names match without or with another legal suffix and with any separator between words, as shown above. A name whose core would be shorter than three characters without its suffix (e.g. `AB A/S`) is matched only as listed.
+
+`false`: names match only as listed (any case, any run of whitespace between words).
 
 ### `patterns`: { label, regex, flags? }[]
 

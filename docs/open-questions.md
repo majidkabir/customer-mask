@@ -8,7 +8,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 2 | [Headless final result text stays masked](#2-headless-final-result-text-stays-masked) | UX | ⚠️ Verified gap |
 | 3 | [Raw prompt in the local transcript's queue record](#3-raw-prompt-in-the-local-transcripts-queue-record) | Local storage | ⚠️ Verified gap |
 | 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ❓ Decision needed |
-| 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | ❓ Decision needed |
+| 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | 🟡 Variants fixed in 0.2; NER open |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ✅ Fixed in 0.2 |
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
@@ -59,12 +59,14 @@ The vault lives in memory (mirrored to the session's `$.state`). After `claude -
 
 ### 5. Recall: customers not in the list
 
-Names are only masked if they are in `customers` or match a pattern. A new customer, a misspelling or an abbreviation passes through.
+Names are only masked if they are in `customers` or match a pattern.
 
-**Options:**
-- Generate the list from the CRM on a schedule (see [configuration](configuration.md#keeping-the-customer-list-current)).
+**Fixed (0.2): spelling variants of listed names.** A listed name now also matches without or with another legal suffix, in any case, and with any separator (`Acme Freight`, `Acme Freight ApS`, `acme-freight`, `AcmeFreight`). Each spelling keeps its own token sharing the customer's number (`CUSTOMER_1`, `CUSTOMER_1-2`), so it is restored exactly. This also fixed a bug where spellings differing only in case shared one token and Claude's Edit tool could fail. Verified live: an Edit on a file with three spellings of one customer applied cleanly, every spelling unchanged.
+
+**Still open:** customers not in the list at all, abbreviations, and misspellings.
+- Generate the list from the CRM on a schedule (see [configuration](configuration.md#keeping-the-customer-list-current)). This is the recommended next step.
 - Add NER-based detection, such as a local [Microsoft Presidio](https://microsoft.github.io/presidio/) service called through `$.http`. This catches person and organisation names, but it adds a local service, latency, and false positives in code.
-- Use fuzzy matching on the list (edit distance, legal-suffix stripping such as `A/S`, `ApS`, `GmbH`).
+- Edit-distance matching for misspellings: risky in code, where near-misses are common.
 
 ### 6. Images, PDFs and other binary content
 
