@@ -14,7 +14,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
 | 9 | [Is pseudonymisation enough for compliance?](#9-is-pseudonymisation-enough-for-compliance) | Compliance | ❓ Needs legal / DPO |
 | 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ❓ Decision needed |
-| 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ❓ Not measured |
+| 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ✅ Hints added in 0.4 |
 | 12 | [Thinking blocks](#12-thinking-blocks) | Coverage | ℹ️ By design |
 | 13 | [Performance on large tool results](#13-performance-on-large-tool-results) | Engineering | ✅ Fixed in 0.2 |
 | 14 | [Mods API stability](#14-mods-api-stability) | Engineering | ✅ Minimum version enforced in 0.2 |
@@ -122,9 +122,9 @@ A mod the user installs can be disabled by the user. For a team rollout, Claude 
 
 ### 11. Effect on answer quality
 
-Claude sees `<<CUSTOMER_1>>` instead of a name, so it loses world knowledge about that customer (industry, country). For most coding and data tasks this doesn't matter, but for "draft an email to …" tone may suffer. This hasn't been measured.
+Claude sees a placeholder instead of a name, so it loses world knowledge about that customer (industry, country). For most coding and data tasks this doesn't matter, but drafted emails and summaries can turn generic.
 
-**Option:** an optional per-customer hint that is sent instead of the name, e.g. `<<CUSTOMER_1>> (Danish freight forwarder)`.
+**Fixed (0.4):** a customer entry can carry a non-identifying [`hint`](configuration.md#hints), shown to Claude once, after that customer's first placeholder. A hint Claude copies into a file or tool call is dropped when the placeholder is restored. Verified live: Claude described the customer from the hint and tailored an email subject to it, and the saved file held the real name with no hint text. Answer quality overall still hasn't been measured systematically.
 
 ### 12. Thinking blocks
 

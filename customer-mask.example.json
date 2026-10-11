@@ -1,6 +1,9 @@
 {
   "customers": [
-    "Acme Freight A/S",
+    {
+      "name": "Acme Freight A/S",
+      "hint": "Danish freight forwarder"
+    },
     "Nordic Widgets ApS"
   ],
   "patterns": [

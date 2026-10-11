@@ -318,3 +318,43 @@ describe('cleaning the transcript', () => {
     expect(cleanTranscript(line, new Vault('k3f9'))).toEqual({ text: line, changedLines: 0 })
   })
 })
+
+describe('customer hints', () => {
+  const rules = buildRules({ customers: [{ name: 'Acme Freight A/S', hint: 'Danish freight forwarder' }, 'Nordic Widgets'] })
+
+  test('the hint follows the first placeholder of that customer only', () => {
+    const v = new Vault('k3f9')
+    const first = mask('Acme Freight A/S and Nordic Widgets', rules, v)
+    expect(first).toBe(`${ph('CUSTOMER', 1, 'k3f9')} [hint: Danish freight forwarder] and ${ph('CUSTOMER', 2, 'k3f9')}`)
+    expect(mask('Acme Freight A/S again, ACME FREIGHT too', rules, v)).toBe(
+      `${ph('CUSTOMER', 1, 'k3f9')} again, ${ph('CUSTOMER', '1-2', 'k3f9')} too`,
+    )
+  })
+
+  test('a copied hint is dropped when restoring; any other bracket stays', () => {
+    const v = new Vault('k3f9')
+    mask('Acme Freight A/S', rules, v)
+    const p1 = ph('CUSTOMER', 1, 'k3f9')
+    expect(unmask(`${p1} [hint: Danish freight forwarder],1`, v)).toBe('Acme Freight A/S,1')
+    expect(unmask(`${p1} [hint: something else]`, v)).toBe('Acme Freight A/S [hint: something else]')
+    expect(unmaskDeep({ command: `echo "${p1} [hint: Danish freight forwarder]"` }, v)).toEqual({ command: 'echo "Acme Freight A/S"' })
+  })
+
+  test('hints are saved with the vault and not shown again after a reload', () => {
+    const v1 = new Vault('k3f9')
+    mask('Acme Freight A/S', rules, v1)
+    expect(v1.entries()[0]?.hint).toBe('Danish freight forwarder')
+    const v2 = new Vault('k3f9')
+    v2.load(v1.entries(), rules)
+    expect(mask('Acme Freight A/S', rules, v2)).toBe(ph('CUSTOMER', 1, 'k3f9'))
+    expect(unmask(`${ph('CUSTOMER', 1, 'k3f9')} [hint: Danish freight forwarder]`, v2)).toBe('Acme Freight A/S')
+  })
+
+  test('hints are cleaned to one short line', () => {
+    const r = buildRules({ customers: [{ name: 'Acme Freight A/S', hint: 'Freight\n[forwarder] ' + 'x'.repeat(300) }] })
+    const out = mask('Acme Freight A/S', r, new Vault('k3f9'))
+    const hint = /\[hint: ([^\]]*)\]/.exec(out)?.[1] ?? ''
+    expect(hint.startsWith('Freight forwarder x')).toBe(true)
+    expect(hint.length).toBe(120)
+  })
+})

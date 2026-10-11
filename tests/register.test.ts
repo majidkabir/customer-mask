@@ -225,6 +225,24 @@ describe('cleaning the transcript at session end', () => {
   })
 })
 
+describe('customer hints in a session', () => {
+  test('Claude sees the hint once; a copied hint never reaches the tool', async ($, on) => {
+    const config = JSON.stringify({ customers: [{ name: 'Acme Freight A/S', hint: 'Danish freight forwarder' }] })
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config } })
+    // The title is masked first, as in a session; it must not use up the hint.
+    const titled = await $.classic.UserPromptSubmit({ prompt: 'Acme Freight A/S is late' } as never)
+    expect(String(titled.sessionTitle)).not.toContain('hint')
+    const first = JSON.stringify((await appendPrompt($, 'Acme Freight A/S is late', 'h1')).message?.content)
+    const m = markerIn(first)
+    expect(first).toContain(`${ph('CUSTOMER', 1, m)} [hint: Danish freight forwarder] is late`)
+    const second = JSON.stringify((await appendPrompt($, 'Acme Freight A/S again', 'h2')).message?.content)
+    expect(second).not.toContain('hint')
+
+    await $.tool.call({ tool: 'Bash', command: `echo "${ph('CUSTOMER', 1, m)} [hint: Danish freight forwarder]"` } as never)
+    expect(seen.ran).toBe('echo "Acme Freight A/S"')
+  })
+})
+
 describe('Claude Code version', () => {
   test('an older Claude Code blocks every request', async ($, on) => {
     const seen = world(on, { version: '2.1.290' })

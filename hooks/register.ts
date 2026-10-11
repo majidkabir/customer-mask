@@ -78,7 +78,7 @@ async function load($: EngineInterface): Promise<void> {
     blocked = `Claude Code ${version} is older than ${MIN_CLAUDE_CODE}, the oldest version customer-mask is tested on. Run \`claude update\`.`
   }
 
-  const customers: string[] = []
+  const customers: NonNullable<MaskConfig['customers']> = []
   const patterns: NonNullable<MaskConfig['patterns']> = []
   let detectors: MaskConfig['detectors'] = {}
   let toolList: string[] | undefined
@@ -141,7 +141,8 @@ async function load($: EngineInterface): Promise<void> {
   await reserveFromTranscript($)
 
   configSummary =
-    `${customers.length} customer name(s), ${patterns.length} custom pattern(s), ` +
+    `${customers.length} customer name(s) (${customers.filter(c => typeof c !== 'string' && c.hint).length} with a hint), ` +
+    `${patterns.length} custom pattern(s), ` +
     `tools kept masked: ${maskedList.join(', ') || 'none'}` +
     (unmaskedList.length ? ` except ${unmaskedList.join(', ')}` : '') +
     `, images/PDFs: ${dropMedia ? 'dropped' : 'sent unmasked'}` +
@@ -225,8 +226,8 @@ async function attach($: EngineInterface, path: string, source: string): Promise
   await writeVaultFile($)
 }
 
-function maskText(text: string): string {
-  return mask(text, rules, vault)
+function maskText(text: string, options?: { hints?: boolean }): string {
+  return mask(text, rules, vault, options)
 }
 
 type Block = { type: string; [field: string]: unknown }
@@ -327,7 +328,8 @@ export const register: Register = on => {
     if (sessionFile === undefined && e.agent_id === undefined) await attach($, e.transcript_path, 'startup')
     const before = vault.size
     const result = await next(e)
-    const title = result.sessionTitle ?? maskText(e.prompt).replace(/\s+/g, ' ').trim().slice(0, 60)
+    // The model never reads the title, so it does not use up a customer's one-time hint.
+    const title = result.sessionTitle ?? maskText(e.prompt, { hints: false }).replace(/\s+/g, ' ').trim().slice(0, 60)
     await persist($, before)
     return { ...result, sessionTitle: title }
   })

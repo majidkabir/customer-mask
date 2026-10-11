@@ -4,8 +4,12 @@ import type { VaultEntry } from '../types'
 
 export type PatternConfig = { label: string; regex: string; flags?: string }
 
+/** A customer with an optional hint: a short, non-identifying description Claude may see instead of the name. */
+export type CustomerEntry = { name: string; hint?: string }
+
 export type MaskConfig = {
-  customers?: string[]
+  /** Names to mask, as strings or as { name, hint }. */
+  customers?: Array<string | CustomerEntry>
   patterns?: PatternConfig[]
   detectors?: { email?: boolean; phone?: boolean; iban?: boolean; cpr?: boolean }
   /**
@@ -126,7 +130,12 @@ export function parseVaultFile(text: string): VaultFile {
     throw new Error('not a customer-mask vault file (version 1)')
   }
   for (const e of data.entries) {
-    if (typeof e?.token !== 'string' || typeof e.value !== 'string' || typeof e.label !== 'string') {
+    if (
+      typeof e?.token !== 'string' ||
+      typeof e.value !== 'string' ||
+      typeof e.label !== 'string' ||
+      (e.hint !== undefined && typeof e.hint !== 'string')
+    ) {
       throw new Error('a vault entry is malformed')
     }
   }
@@ -167,6 +176,8 @@ type Rule = {
   normalize: (value: string) => string
   /** Gives back part of a match that is not the value (an ambiguous word after a name). */
   trim?: (match: string) => { value: string; rest: string }
+  /** Hints by normalized value: shown once per customer, after its first placeholder. */
+  hints?: ReadonlyMap<string, string>
 }
 
 /**
@@ -212,6 +223,12 @@ function trimAmbiguousSuffix(match: string): { value: string; rest: string } {
  * Group 1 is the token, group 2 the marker (absent in the legacy form).
  */
 const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+(?:-\d+)?)(?:\.([a-z0-9]{4}))?>>/g
+
+/** A placeholder with the hint that may follow it (group 3); used when restoring, to drop a copied hint. */
+const PLACEHOLDER_WITH_HINT = /<<([A-Z][A-Z0-9_]*_\d+(?:-\d+)?)(?:\.([a-z0-9]{4}))?>>(?: \[hint: ([^\]\n]{1,200})\])?/g
+
+/** Makes a configured hint safe to put in brackets on one line. */
+const cleanHint = (hint: string) => hint.replace(/[\]\[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120)
 
 /** A new per-session marker: four random lowercase letters or digits. */
 export function newMarker(): string {
@@ -266,9 +283,12 @@ export function buildRules(config: MaskConfig): Rule[] {
     })
   }
 
-  const names = (config.customers ?? []).map(n => n.trim()).filter(n => n.length > 1)
-  if (names.length > 0) {
-    rules.push(...(config.nameVariants === false ? [exactNameRule(names)] : nameRules(names)))
+  const customers = (config.customers ?? [])
+    .map(c => (typeof c === 'string' ? { name: c } : c))
+    .map(c => ({ name: String(c.name ?? '').trim(), hint: c.hint ? cleanHint(String(c.hint)) : '' }))
+    .filter(c => c.name.length > 1)
+  if (customers.length > 0) {
+    rules.push(...(config.nameVariants === false ? [exactNameRule(customers)] : nameRules(customers)))
   }
 
   if (d.phone) {
@@ -391,35 +411,48 @@ function nameScanner(names: Iterable<string>, variant: boolean): (text: string, 
   }
 }
 
+type Customer = { name: string; hint: string }
+
+/** The hints of a list of customers, keyed as `normalize` keys their values. */
+function hintMap(customers: readonly Customer[], normalize: (v: string) => string): Map<string, string> {
+  const hints = new Map<string, string>()
+  for (const c of customers) if (c.hint) hints.set(normalize(c.name), c.hint)
+  return hints
+}
+
 /** Names as listed: any case, any run of whitespace between words. */
-function exactNameRule(names: Iterable<string>): Rule {
+function exactNameRule(customers: readonly Customer[]): Rule {
+  const normalize = (v: string) => lower(v).replace(/\s+/g, ' ')
   return {
     label: 'CUSTOMER',
-    scan: nameScanner(names, false),
-    normalize: v => lower(v).replace(/\s+/g, ' '),
+    scan: nameScanner(customers.map(c => c.name), false),
+    normalize,
+    hints: hintMap(customers, normalize),
   }
 }
 
 /** Names without their legal suffix, with name variants (see `nameScanner`). */
-function variantNameRule(cores: Iterable<string>): Rule {
+function variantNameRule(customers: readonly Customer[]): Rule {
+  const normalize = (v: string) => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, '')
   return {
     label: 'CUSTOMER',
-    scan: nameScanner(cores, true),
-    normalize: v => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, ''),
+    scan: nameScanner(new Set(customers.map(c => stripSuffix(c.name).trim())), true),
+    normalize,
     trim: trimAmbiguousSuffix,
+    hints: hintMap(customers, normalize),
   }
 }
 
-/** Splits names into cores matched with variants, and names too short for that, matched as listed. */
-function nameRules(names: string[]): Rule[] {
-  const cores = new Set<string>()
-  const exact = new Set<string>()
-  for (const name of names) {
-    const core = stripSuffix(name).trim()
-    if (core.replace(/[^\p{L}\p{N}]/gu, '').length >= 3) cores.add(core)
-    else exact.add(name)
+/** Splits customers into cores matched with variants, and names too short for that, matched as listed. */
+function nameRules(customers: readonly Customer[]): Rule[] {
+  const cores: Customer[] = []
+  const exact: Customer[] = []
+  for (const c of customers) {
+    const core = stripSuffix(c.name).trim()
+    if (core.replace(/[^\p{L}\p{N}]/gu, '').length >= 3) cores.push(c)
+    else exact.push(c)
   }
-  return [...(cores.size ? [variantNameRule(cores)] : []), ...(exact.size ? [exactNameRule(exact)] : [])]
+  return [...(cores.length ? [variantNameRule(cores)] : []), ...(exact.length ? [exactNameRule(exact)] : [])]
 }
 
 /** LABEL_n-k → { base: LABEL_n, label, n, k }; k is 1 for the first spelling. */
@@ -443,6 +476,8 @@ export class Vault {
   private byToken = new Map<string, VaultEntry>()
   private counters = new Map<string, number>()
   private variants = new Map<string, number>()
+  /** Customers whose hint has been shown, by base token. */
+  private hintShown = new Set<string>()
   /** This session's marker; '' is the legacy form without one. */
   readonly marker: string
 
@@ -464,7 +499,21 @@ export class Vault {
     return (marker ?? '') === this.marker ? this.valueOf(token) : undefined
   }
 
-  tokenFor(label: string, value: string, normalize: (v: string) => string): string {
+  /** The hint stored with a token's customer (its first spelling's entry). */
+  hintOf(token: string): string | undefined {
+    return this.byToken.get(parseToken(token).base)?.hint
+  }
+
+  /** The hint to show after this placeholder: its customer's, the first time only. */
+  takeHint(token: string): string | undefined {
+    const base = parseToken(token).base
+    const hint = this.byToken.get(base)?.hint
+    if (!hint || this.hintShown.has(base)) return undefined
+    this.hintShown.add(base)
+    return hint
+  }
+
+  tokenFor(label: string, value: string, normalize: (v: string) => string, hint?: string): string {
     const formKey = `${label}\u0000${value}`
     const known = this.byForm.get(formKey)
     if (known !== undefined) return known
@@ -482,7 +531,8 @@ export class Vault {
       token = `${token}-${k}`
     }
     this.byForm.set(formKey, token)
-    this.byToken.set(token, { token, value, label })
+    const isFirstSpelling = !token.includes('-')
+    this.byToken.set(token, hint && isFirstSpelling ? { token, value, label, hint } : { token, value, label })
     return token
   }
 
@@ -517,6 +567,8 @@ export class Vault {
       const entityKey = `${entry.label}\u0000${normalize(entry.value)}`
       if (!this.byEntity.has(entityKey)) this.byEntity.set(entityKey, t.base)
       this.byToken.set(entry.token, entry)
+      // A loaded customer's hint is already in the conversation it came from.
+      if (entry.hint) this.hintShown.add(t.base)
       this.bump(t)
     }
   }
@@ -533,12 +585,20 @@ function outsidePlaceholders(text: string, fn: (plain: string) => string): strin
   return out + fn(text.slice(last))
 }
 
-export function mask(text: string, rules: readonly Rule[], vault: Vault): string {
+/**
+ * Replaces customer data with placeholders. `hints: false` is for text the
+ * model never reads (the session title): a customer's one-time hint is then
+ * kept for the first text it does read.
+ */
+export function mask(text: string, rules: readonly Rule[], vault: Vault, options: { hints?: boolean } = {}): string {
+  const withHints = options.hints !== false
   let result = text
   for (const rule of rules) {
     const onMatch = (match: string) => {
       const { value, rest } = rule.trim ? rule.trim(match) : { value: match, rest: '' }
-      return vault.format(vault.tokenFor(rule.label, value, rule.normalize)) + rest
+      const token = vault.tokenFor(rule.label, value, rule.normalize, rule.hints?.get(rule.normalize(value)))
+      const hint = withHints ? vault.takeHint(token) : undefined
+      return vault.format(token) + (hint ? ` [hint: ${hint}]` : '') + rest
     }
     result = outsidePlaceholders(result, plain =>
       rule.scan ? rule.scan(plain, onMatch) : rule.regex ? plain.replace(rule.regex, onMatch) : plain,
@@ -547,8 +607,17 @@ export function mask(text: string, rules: readonly Rule[], vault: Vault): string
   return result
 }
 
+/** Restores this session's placeholders. A hint copied after one is dropped, so it never reaches a file or a tool. */
 export function unmask(text: string, vault: Vault): string {
-  return text.replace(PLACEHOLDER, (whole, token: string, marker: string | undefined) => vault.resolve(token, marker) ?? whole)
+  return text.replace(
+    PLACEHOLDER_WITH_HINT,
+    (whole, token: string, marker: string | undefined, hint: string | undefined) => {
+      const value = vault.resolve(token, marker)
+      if (value === undefined) return whole
+      if (hint === undefined) return value
+      return hint === vault.hintOf(token) ? value : `${value} [hint: ${hint}]`
+    },
+  )
 }
 
 /** Unmasks every string inside a JSON-like value, leaving the listed top-level keys alone. */
@@ -607,6 +676,8 @@ export function systemNote(vault: Vault): string {
   return (
     `Customer data in this conversation has been replaced with placeholders such as ${a} or ${b}. ` +
     `A placeholder with a -2, -3 ... after its number, such as ${vault.format('CUSTOMER_1-2')}, is another spelling of the same value. ` +
+    'The first time a customer appears, its placeholder may be followed by [hint: ...], a short description the user gave ' +
+    'for context; use it to understand the customer, but never write the hint into files, commands or messages. ' +
     'Use a placeholder exactly as written, including the part after the dot, wherever its real value belongs ' +
     '(prose, code, commands, file edits): it is restored automatically before any tool runs and before the user ' +
     'reads your reply. Never guess, reconstruct or invent the real values, and do not comment on the placeholders unless asked.'

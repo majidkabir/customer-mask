@@ -20,7 +20,10 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 
 ```json
 {
-  "customers": ["Acme Freight A/S", "Nordic Widgets ApS"],
+  "customers": [
+    { "name": "Acme Freight A/S", "hint": "Danish freight forwarder" },
+    "Nordic Widgets ApS"
+  ],
   "patterns": [
     { "label": "SHIPMENT", "regex": "\\bSHP\\d{8}\\b" },
     { "label": "CUSTOMER_NO", "regex": "\\bC\\d{7}\\b" },
@@ -34,7 +37,7 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 }
 ```
 
-### `customers`: string[]
+### `customers`: (string | { name, hint })[]
 
 Names to mask. Matching is whole-word and ignores case. By default each name also matches its common variants (see [`nameVariants`](#namevariants-boolean)), so listing `Acme Freight A/S` also catches:
 
@@ -50,6 +53,18 @@ Tips:
 
 - Abbreviations and nicknames (`AF`, `Acme`) still need their own entry.
 - Very short or common words (`Shell`, `Apple`, `Target`) will also mask ordinary uses of the word in code and prose. That is safe, but it can confuse Claude. Prefer the full legal name where you can.
+
+#### Hints
+
+A placeholder hides what Claude would otherwise know about a customer (industry, country, size), which can make drafted emails or summaries generic. An entry can carry a `hint`: a short description that **does not identify** the customer.
+
+```json
+{ "customers": [{ "name": "Acme Freight A/S", "hint": "Danish freight forwarder, ships to the Baltics" }] }
+```
+
+The first time that customer appears in a session, Claude sees `<<CUSTOMER_1.k3f9>> [hint: Danish freight forwarder, ships to the Baltics]`. Later mentions show the placeholder alone. If Claude copies the hint into a file, command or tool call, it is dropped when the placeholder is restored, so it never ends up in your work. Hints are cut to one line of 120 characters.
+
+Write hints like this: *"Danish freight forwarder"* is fine. *"The freight forwarder that bought Baltic Haulage in 2024"* identifies the customer and defeats the point.
 
 ### `nameVariants`: boolean
 
