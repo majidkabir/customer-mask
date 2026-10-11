@@ -7,8 +7,11 @@ import {
   DEFAULT_MASKED_TOOLS,
   mask,
   StreamUnmasker,
+  compareVersions,
   MEDIA_BLOCKS,
+  MIN_CLAUDE_CODE,
   MEDIA_NOTE,
+  UNCHECKED_NOTE,
   newMarker,
   systemNote,
   toolPolicy,
@@ -48,6 +51,7 @@ let unmaskedList: readonly string[] = []
 let keepsPlaceholders = toolPolicy(DEFAULT_MASKED_TOOLS, [])
 let dropMedia = true
 let mediaDropped = 0
+let rowsRemoved = 0
 /** Set when masking failed: from then on no request leaves this session. */
 let blocked: string | undefined
 let loading: Promise<void> | undefined
@@ -61,6 +65,11 @@ function ready($: EngineInterface): Promise<void> {
 }
 
 async function load($: EngineInterface): Promise<void> {
+  const { version } = await $.session.version()
+  if (compareVersions(version, MIN_CLAUDE_CODE) < 0) {
+    blocked = `Claude Code ${version} is older than ${MIN_CLAUDE_CODE}, the oldest version customer-mask is tested on. Run \`claude update\`.`
+  }
+
   const customers: string[] = []
   const patterns: NonNullable<MaskConfig['patterns']> = []
   let detectors: MaskConfig['detectors'] = {}
@@ -192,20 +201,30 @@ function maskContent(content: readonly Block[]): Block[] {
   })
 }
 
+/** A row's content with every text removed: what is stored when masking it failed. */
+function redactContent(content: readonly Block[]): Block[] {
+  rowsRemoved += 1
+  return content
+    .filter(b => !MEDIA_BLOCKS.has(b.type))
+    .map(b =>
+      b.type === 'text' ? { ...b, text: UNCHECKED_NOTE } : b.type === 'tool_result' ? { ...b, content: UNCHECKED_NOTE } : b,
+    )
+}
+
 export const register: Register = on => {
   // Every row the conversation keeps passes here before it is stored and sent.
+  // If masking a row throws or runs out of time, Claude Code would skip this
+  // hook and store the row as it was; the .catch stores it with its text
+  // removed instead, so a failure never lets customer data through.
   on('session.append', async ($, e, next) => {
-    try {
-      await ready($)
-      const before = vault.size
-      const content = maskContent(e.message.content)
-      await persist($, before)
-      return next({ ...e, message: { ...e.message, content } })
-    } catch (err) {
-      blocked = `masking a ${e.door} row failed (${String(err)}).`
-      return next(e)
-    }
-  })
+    await ready($)
+    const before = vault.size
+    const content = maskContent(e.message.content)
+    await persist($, before)
+    return next({ ...e, message: { ...e.message, content } })
+  }).catch(($, e, next) =>
+    next.called ? next(e) : next({ ...e, message: { ...e.message, content: redactContent(e.message.content) } }),
+  )
 
   // The session title: by default the engine asks a small model to title the
   // session from the raw first prompt. A title set here replaces that call, so
@@ -318,6 +337,7 @@ export const register: Register = on => {
         `${NAME}: ${blocked ? `BLOCKED — ${blocked}` : 'active'}`,
         `Config: ${configSummary}`,
         `Images/PDFs removed this session: ${mediaDropped}`,
+        `Rows removed because masking failed: ${rowsRemoved}`,
         rows.length ? `Replaced this session (${rows.length}):\n${rows.join('\n')}` : 'Nothing replaced yet.',
       ].join('\n'),
     }

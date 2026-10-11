@@ -28,6 +28,28 @@ export type MaskConfig = {
 /** Content block kinds that carry pixels or a document, which text masking cannot see into. */
 export const MEDIA_BLOCKS = new Set(['image', 'document'])
 
+/**
+ * The oldest Claude Code this mod is tested on. On an older build a hook this
+ * mod relies on might not exist; it would then never run, nothing would be
+ * masked and nothing would stop the request, so older builds are blocked.
+ */
+export const MIN_CLAUDE_CODE = '2.1.296'
+
+/** Compares dotted release numbers ("2.1.296"); anything after a '-' is ignored. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split('-')[0]?.split('.').map(Number) ?? []
+  const pb = b.split('-')[0]?.split('.').map(Number) ?? []
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0)
+    if (d !== 0) return Math.sign(d)
+  }
+  return 0
+}
+
+export const UNCHECKED_NOTE =
+  '[customer-mask could not check this content for customer data in time, so it was removed before it was ' +
+  'stored or sent. Ask the user for a smaller excerpt.]'
+
 export const MEDIA_NOTE =
   '[customer-mask removed an image or PDF here: media cannot be checked for customer data, so it is not sent. ' +
   'Ask the user to describe it, or to extract its text into a file.]'
@@ -51,7 +73,10 @@ export function toolPolicy(masked: readonly string[], unmasked: readonly string[
 
 type Rule = {
   label: string
-  regex: RegExp
+  /** Finds the values (rules built from a pattern). */
+  regex?: RegExp
+  /** Finds the values and replaces each with `onMatch`'s answer (rules built from a list). */
+  scan?: (text: string, onMatch: (match: string) => string) => string
   normalize: (value: string) => string
   /** Gives back part of a match that is not the value (an ambiguous word after a name). */
   trim?: (match: string) => { value: string; rest: string }
@@ -112,7 +137,6 @@ const exact = (v: string) => v
 const lower = (v: string) => v.toLowerCase()
 const compact = (v: string) => v.replace(/[\s.-]/g, '').toUpperCase()
 
-const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const toLabel = (s: string) =>
   s.toUpperCase().replace(/[^A-Z0-9_]/g, '_').replace(/^[^A-Z]+/, '') || 'DATA'
@@ -157,7 +181,7 @@ export function buildRules(config: MaskConfig): Rule[] {
 
   const names = (config.customers ?? []).map(n => n.trim()).filter(n => n.length > 1)
   if (names.length > 0) {
-    rules.push(config.nameVariants === false ? exactNameRule(names) : variantNameRule(names))
+    rules.push(...(config.nameVariants === false ? [exactNameRule(names)] : nameRules(names)))
   }
 
   if (d.phone) {
@@ -172,48 +196,143 @@ export function buildRules(config: MaskConfig): Rule[] {
   return rules
 }
 
-const WORD_BOUNDARY_BEFORE = '(?<![\\p{L}\\p{N}])'
-const WORD_BOUNDARY_AFTER = '(?![\\p{L}\\p{N}])'
-const byLengthDesc = (a: string, b: string) => b.length - a.length
+/** A node of the customer-name trie: lower-cased characters to the next node. */
+type TrieNode = { next: Map<string, TrieNode>; end: boolean; sepOK: boolean }
 
-/** Names as listed, any case, any run of whitespace between words. */
-function exactNameRule(names: string[]): Rule {
-  const alternation = [...names].sort(byLengthDesc).map(n => escapeRegex(n).replace(/\s+/g, '\\s+')).join('|')
+const newNode = (): TrieNode => ({ next: new Map(), end: false, sepOK: false })
+
+const WORD_CHAR = /[\p{L}\p{N}]/u
+const isWordChar = (c: string | undefined): boolean =>
+  c !== undefined && (c < '\u0080' ? /[A-Za-z0-9]/.test(c) : WORD_CHAR.test(c))
+const isVariantSep = (c: string) => c === ' ' || c === '-' || c === '.' || c === '_' || /\s/.test(c)
+const isSpace = (c: string) => /\s/.test(c)
+
+function child(node: TrieNode, ch: string): TrieNode {
+  let n = node.next.get(ch)
+  if (!n) node.next.set(ch, (n = newNode()))
+  return n
+}
+
+/** Steps through `lowered` (usually one character) from `node`; undefined when the trie has no such path. */
+function step(node: TrieNode, lowered: string): TrieNode | undefined {
+  let n: TrieNode | undefined = node
+  for (const ch of lowered) {
+    n = n.next.get(ch)
+    if (!n) return undefined
+  }
+  return n
+}
+
+/**
+ * Finds listed names in one pass over the text, whatever the size of the list:
+ * at each word start it walks a trie of the names, keeps the longest name that
+ * ends on a word boundary, and moves past it.
+ *
+ * `variant` names: any case, separators (space, hyphen, dot, underscore, or
+ * none) between words, then optionally a legal suffix. Otherwise names match
+ * as listed, in any case, with any run of whitespace between words.
+ */
+function nameScanner(names: Iterable<string>, variant: boolean): (text: string, onMatch: (m: string) => string) => string {
+  const root = newNode()
+  for (const name of names) {
+    let node = root
+    if (variant) {
+      const words = name.split(NAME_SEPARATORS).filter(Boolean)
+      words.forEach((word, wi) => {
+        for (const ch of word.toLowerCase()) node = child(node, ch)
+        if (wi < words.length - 1) node.sepOK = true
+      })
+    } else {
+      for (const ch of name.toLowerCase().replace(/\s+/g, ' ')) node = child(node, ch)
+    }
+    node.end = true
+  }
+  const suffix = new RegExp(`[\\s,]+(?:${SUFFIX_ALT})(?![\\p{L}\\p{N}])`, 'iuy')
+
+  /** End of the longest name starting at `i`, or -1. */
+  const longestAt = (text: string, i: number): number => {
+    let node = root
+    let j = i
+    let last = -1
+    let inSpace = false
+    while (j < text.length) {
+      const c = text[j] as string
+      if (!variant && isSpace(c)) {
+        if (inSpace) { j++; continue }
+        const n = node.next.get(' ')
+        if (!n) break
+        node = n
+        inSpace = true
+        j++
+        continue
+      }
+      inSpace = false
+      const n = step(node, c.toLowerCase())
+      if (n) {
+        node = n
+        j++
+        if (node.end && !isWordChar(text[j])) last = j
+        continue
+      }
+      if (variant && node.sepOK && isVariantSep(c)) { j++; continue }
+      break
+    }
+    if (last >= 0 && variant) {
+      suffix.lastIndex = last
+      if (suffix.test(text)) last = suffix.lastIndex
+    }
+    return last
+  }
+
+  return (text, onMatch) => {
+    let out = ''
+    let copied = 0
+    let i = 0
+    while (i < text.length) {
+      const c = text[i] as string
+      if (!isWordChar(text[i - 1]) && step(root, c.toLowerCase())) {
+        const end = longestAt(text, i)
+        if (end > i) {
+          out += text.slice(copied, i) + onMatch(text.slice(i, end))
+          copied = i = end
+          continue
+        }
+      }
+      i++
+    }
+    return copied === 0 ? text : out + text.slice(copied)
+  }
+}
+
+/** Names as listed: any case, any run of whitespace between words. */
+function exactNameRule(names: Iterable<string>): Rule {
   return {
     label: 'CUSTOMER',
-    regex: new RegExp(`${WORD_BOUNDARY_BEFORE}(?:${alternation})${WORD_BOUNDARY_AFTER}`, 'giu'),
+    scan: nameScanner(names, false),
     normalize: v => lower(v).replace(/\s+/g, ' '),
   }
 }
 
-/**
- * Names without their legal suffix, any case, with any separator (or none)
- * between words, then optionally any legal suffix. A name whose core would be
- * shorter than three characters is matched as listed.
- */
-function variantNameRule(names: string[]): Rule {
+/** Names without their legal suffix, with name variants (see `nameScanner`). */
+function variantNameRule(cores: Iterable<string>): Rule {
+  return {
+    label: 'CUSTOMER',
+    scan: nameScanner(cores, true),
+    normalize: v => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, ''),
+    trim: trimAmbiguousSuffix,
+  }
+}
+
+/** Splits names into cores matched with variants, and names too short for that, matched as listed. */
+function nameRules(names: string[]): Rule[] {
   const cores = new Set<string>()
   const exact = new Set<string>()
   for (const name of names) {
     const core = stripSuffix(name).trim()
-    if (core.replace(NAME_SEPARATORS, '').length >= 3) cores.add(core)
+    if (core.replace(/[^\p{L}\p{N}]/gu, '').length >= 3) cores.add(core)
     else exact.add(name)
   }
-  const coreAlt = [...cores]
-    .sort(byLengthDesc)
-    .map(c => c.split(NAME_SEPARATORS).filter(Boolean).map(escapeRegex).join('[\\s\\-._]*'))
-    .join('|')
-  const exactAlt = [...exact].sort(byLengthDesc).map(n => escapeRegex(n).replace(/\s+/g, '\\s+')).join('|')
-  const parts = [
-    ...(coreAlt ? [`(?:${coreAlt})(?:[\\s,]+(?:${SUFFIX_ALT}))?`] : []),
-    ...(exactAlt ? [`(?:${exactAlt})`] : []),
-  ]
-  return {
-    label: 'CUSTOMER',
-    regex: new RegExp(`${WORD_BOUNDARY_BEFORE}(?:${parts.join('|')})${WORD_BOUNDARY_AFTER}`, 'giu'),
-    normalize: v => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, ''),
-    trim: trimAmbiguousSuffix,
-  }
+  return [...(cores.size ? [variantNameRule(cores)] : []), ...(exact.size ? [exactNameRule(exact)] : [])]
 }
 
 /** LABEL_n-k → { base: LABEL_n, label, n, k }; k is 1 for the first spelling. */
@@ -330,11 +449,12 @@ function outsidePlaceholders(text: string, fn: (plain: string) => string): strin
 export function mask(text: string, rules: readonly Rule[], vault: Vault): string {
   let result = text
   for (const rule of rules) {
+    const onMatch = (match: string) => {
+      const { value, rest } = rule.trim ? rule.trim(match) : { value: match, rest: '' }
+      return vault.format(vault.tokenFor(rule.label, value, rule.normalize)) + rest
+    }
     result = outsidePlaceholders(result, plain =>
-      plain.replace(rule.regex, match => {
-        const { value, rest } = rule.trim ? rule.trim(match) : { value: match, rest: '' }
-        return vault.format(vault.tokenFor(rule.label, value, rule.normalize)) + rest
-      }),
+      rule.scan ? rule.scan(plain, onMatch) : rule.regex ? plain.replace(rule.regex, onMatch) : plain,
     )
   }
   return result

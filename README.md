@@ -38,7 +38,7 @@ flowchart LR
 
 ## Quick start
 
-**1. Install** (Claude Code v2.1.287 or newer). At the Claude Code prompt:
+**1. Install** (Claude Code 2.1.296 or newer; on an older version the mod blocks every request rather than risk running half-working). At the Claude Code prompt:
 
 ```
 /plugin install customer-mask --marketplace majidkabir/customer-mask
@@ -91,7 +91,7 @@ It shows the config it loaded and every value it has replaced so far. The status
 | Spelling variants of listed customers (`Acme Freight`, `ACME FREIGHT ApS`, `acme-freight`) | ✅ |
 | Customer names that are in neither your list nor a pattern | ❌ detection is list- and pattern-based |
 
-If masking ever fails (a broken config, an exception), the mod **blocks** further requests in that session instead of sending unmasked data.
+If anything goes wrong, the mod fails closed. A broken config or an old Claude Code **blocks** every request. A row that can't be masked in time is stored and sent **with its text removed**. Customer data is never sent unmasked.
 
 ## Documentation
 
@@ -102,4 +102,4 @@ If masking ever fails (a broken config, an exception), the mod **blocks** furthe
 
 ## Status
 
-Version 0.1, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.2, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.

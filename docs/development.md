@@ -15,7 +15,8 @@ customer-mask/
 │   └── index.d.ts           # the $.state contract (the vault)
 ├── tests/
 │   ├── masker.test.ts       # unit tests of the masking logic
-│   └── register.test.ts     # hooks driven through the real Claude Code engine
+│   ├── register.test.ts     # hooks driven through the real Claude Code engine
+│   └── scale.test.ts        # timing with large customer lists and 1 MB inputs
 ├── docs/
 ├── customer-mask.example.json
 └── .github/workflows/test.yml
@@ -25,7 +26,7 @@ customer-mask/
 
 ## Requirements
 
-- Claude Code **2.1.287+** (mods are on by default from that version)
+- Claude Code **2.1.296+**. Mods exist from 2.1.287, but this mod is tested on 2.1.296 and blocks requests on anything older: a hook missing on an older build would silently mask nothing. The minimum is `MIN_CLAUDE_CODE` in `hooks/masker.ts`; raise it when a release starts depending on newer behaviour.
 - Node 22+ only if you want to type-check with `tsc`
 
 ## Run it locally
@@ -59,7 +60,7 @@ When writing tests, build placeholder strings at run time (`` `<<${label}_${n}>>
 
 ## What has been verified
 
-Besides the 22 automated tests, the mod was run end to end against the real model with Claude Code 2.1.296.
+Besides the automated tests (54, including `tests/scale.test.ts`, which fails if masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model with Claude Code 2.1.296.
 
 | Check | Result |
 | --- | --- |

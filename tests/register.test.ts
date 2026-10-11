@@ -19,6 +19,7 @@ type World = {
   reply?: TurnStepChunk[] | (() => TurnStepChunk[])
   sections?: { id: string; text: string; scope: 'shared' | 'session' }[]
   history?: { role: 'user' | 'assistant'; text: string; toolUses: never[] }[]
+  version?: string
 }
 
 /**
@@ -52,6 +53,7 @@ function world(on: On, w: World = {}) {
   on('prompt.compose', () => ({ sections: w.sections ?? [] }))
   on('classic.UserPromptSubmit', () => ({}))
   on('session.messages', () => ({ value: w.history ?? [] }))
+  on('session.version', () => ({ value: { version: w.version ?? '2.1.296' } }))
   return seen
 }
 
@@ -106,6 +108,40 @@ describe('outgoing: session.append', () => {
     const text = JSON.stringify(stored.message?.content)
     expect(text).not.toContain('Acme')
     expect(text).not.toContain('SHP87654321')
+  })
+})
+
+describe('failing closed', () => {
+  test('a row that cannot be masked is stored with its text removed, not as it was', async ($, on) => {
+    world(on)
+    const stored = await $.session.append({
+      message: {
+        type: 'user',
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 't9', content: ['Acme Freight A/S', null] }],
+      },
+      door: 'tool-result',
+      origin: { kind: 'tool', tool: 'Read' },
+      uuid: 'f1',
+    } as never)
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).not.toContain('Acme')
+    expect(text).toContain('could not check this content')
+  })
+})
+
+describe('Claude Code version', () => {
+  test('an older Claude Code blocks every request', async ($, on) => {
+    const seen = world(on, { version: '2.1.290' })
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
+    expect(seen.requestSent).toBe(false)
+    expect(textOf(chunks)).toContain('older than')
+  })
+
+  test('the tested version and newer ones run', async ($, on) => {
+    const seen = world(on, { version: '2.2.0-dev.20261101.t000000.shaabcdef' })
+    await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
+    expect(seen.requestSent).toBe(true)
   })
 })
 

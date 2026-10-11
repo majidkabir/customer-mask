@@ -179,16 +179,18 @@ Each content block (text, thinking) is unmasked on its own, and any held tail is
 
 ## 7. Failing closed
 
-A mod hook that throws is normally **skipped** by Claude Code, and for this mod a skipped hook would mean unmasked data goes out. So every failure path ends in a block:
+A mod hook that throws or runs out of time (10 s) is normally **skipped** by Claude Code, and for this mod a skipped hook would mean unmasked data goes out. So every failure path ends in a block or a removal:
 
 ```mermaid
 flowchart TD
-    S([Session starts]) --> L{Config loads<br/>and compiles?}
+    S([Session starts]) --> V{Claude Code<br/>2.1.296 or newer?}
+    V -- no --> B[["BLOCKED<br/>every model request is answered<br/>locally with an error; nothing is sent"]]
+    V -- yes --> L{Config loads<br/>and compiles?}
+    L -- "no (bad JSON, bad regex,<br/>bad option)" --> B
     L -- yes --> R[Masking active]
-    L -- "no (bad JSON, bad regex, read error)" --> B
-    R --> A{Masking a row<br/>throws?}
+    R --> A{Masking a row throws<br/>or takes over 10 s?}
     A -- no --> R
-    A -- yes --> B[["BLOCKED<br/>every later model request is answered<br/>locally with an error; nothing is sent"]]
+    A -- yes --> X[That row is stored and sent<br/>with its text removed]
     R --> T{Unmasking tool<br/>arguments throws?}
     T -- no --> R
     T -- yes --> D[That tool call is denied]
@@ -196,10 +198,10 @@ flowchart TD
     classDef ok fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
     classDef bad fill:#ffebee,stroke:#c62828,color:#b71c1c
     class R ok
-    class B,D bad
+    class B,D,X bad
 ```
 
-The status line shows `🔒 customer-mask: BLOCKED`, and `/customer-mask` says why. Fix the cause and restart the session.
+When blocked, the status line shows `🔒 customer-mask: BLOCKED`, and `/customer-mask` says why. Fix the cause and restart the session. `/customer-mask` also counts rows removed because masking failed.
 
 ## 8. Why you still see real values
 

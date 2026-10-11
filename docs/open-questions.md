@@ -16,8 +16,8 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ❓ Decision needed |
 | 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ❓ Not measured |
 | 12 | [Thinking blocks](#12-thinking-blocks) | Coverage | ℹ️ By design |
-| 13 | [Performance on large tool results](#13-performance-on-large-tool-results) | Engineering | ❓ Not measured |
-| 14 | [Mods API stability](#14-mods-api-stability) | Engineering | ℹ️ Watch |
+| 13 | [Performance on large tool results](#13-performance-on-large-tool-results) | Engineering | ✅ Fixed in 0.2 |
+| 14 | [Mods API stability](#14-mods-api-stability) | Engineering | ✅ Minimum version enforced in 0.2 |
 | 15 | [Licence](#15-licence) | Repo | ❓ Decision needed |
 
 ---
@@ -120,13 +120,25 @@ Thinking is unmasked for **display** only. The thinking the transcript keeps is 
 
 ### 13. Performance on large tool results
 
-Every rule runs over every tool result. The customer list compiles into one regex, but a 50k-name list over a multi-MB log has not been benchmarked. Hooks have a 10-second budget, and a hook that runs out is skipped, which would trigger the [fail-closed path](how-it-works.md#7-failing-closed).
+**Was:** the customer list compiled into one big regex. Benchmarked, it took **14 s** to mask a 1 MB log with 10,000 names, beyond the 10 s a hook gets. A list of 50,000 names failed outright (*regular expression too large*). Worse, a hook that ran out of time was skipped, and the row was then stored and sent **unmasked**.
 
-**To do:** a benchmark test with a realistic list size. Consider an Aho–Corasick matcher for large lists.
+**Fixed (0.2):**
+- Names are matched with a trie in one pass over the text, so the cost barely depends on the list size.
+
+  | Names | Input | Before | After |
+  | --- | --- | --- | --- |
+  | 10,000 | 100 KB | 2.3 s | 0.2 s |
+  | 10,000 | 1 MB | 14.4 s | 0.6 s |
+  | 50,000 | 1 MB | crashed | 0.8 s |
+
+- If masking a row ever throws or runs out of time anyway, the row is stored with its text removed (`session.append` now has a fail-closed `.catch`), never as it was.
+- `tests/scale.test.ts` fails if 50,000 names over 1 MB takes 5 s or more.
 
 ### 14. Mods API stability
 
-The mods API is marked *early access* and may change between releases. The tests (`claude plugin test`) run against the installed Claude Code, so CI catches breaking changes. Pinning a minimum Claude Code version per release of this mod would help.
+The mods API is marked *early access* and may change between releases. The tests (`claude plugin test`) run against the latest Claude Code in CI, so breaking changes show up there.
+
+**Fixed (0.2):** Claude Code has no manifest field for a minimum version, so the mod checks `$.session.version()` itself. On anything older than 2.1.296 (the version it is tested on) it blocks every request. On an older build a hook it relies on might not exist; that hook would never run, nothing would be masked, and nothing would stop the request.
 
 ### 15. Licence
 

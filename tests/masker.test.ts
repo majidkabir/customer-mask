@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   buildRules,
+  compareVersions,
   DEFAULT_MASKED_TOOLS,
   mask,
   newMarker,
@@ -244,5 +245,15 @@ describe('customer name variants', () => {
       const s = new StreamUnmasker(vault)
       expect(s.push(whole.slice(0, cut)) + s.push(whole.slice(cut)) + s.flush()).toBe('x ACME FREIGHT y')
     }
+  })
+})
+
+describe('compareVersions', () => {
+  test('orders releases numerically and ignores build suffixes', () => {
+    expect(compareVersions('2.1.296', '2.1.296')).toBe(0)
+    expect(compareVersions('2.1.290', '2.1.296')).toBe(-1)
+    expect(compareVersions('2.1.1000', '2.1.296')).toBe(1)
+    expect(compareVersions('2.2.0-dev.20261101', '2.1.296')).toBe(1)
+    expect(compareVersions('3', '2.9.9')).toBe(1)
   })
 })
