@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   buildRules,
+  cleanText,
   cleanTranscript,
   compareVersions,
   DEFAULT_MASKED_TOOLS,
@@ -356,5 +357,22 @@ describe('customer hints', () => {
     const hint = /\[hint: ([^\]]*)\]/.exec(out)?.[1] ?? ''
     expect(hint.startsWith('Freight forwarder x')).toBe(true)
     expect(hint.length).toBe(120)
+  })
+})
+
+describe('cleaning with the rules', () => {
+  test('masks values the model never saw, and still the known ones', () => {
+    const rules = buildRules(config)
+    const v = new Vault('k3f9')
+    mask('Acme Freight A/S', rules, v)
+    const out = cleanText('Acme Freight A/S then SHP12345678 and q@w.dk', v, rules)
+    expect(out).toBe(`${ph('CUSTOMER', 1, 'k3f9')} then ${ph('SHIPMENT', 1, 'k3f9')} and ${ph('EMAIL', 1, 'k3f9')}`)
+    expect(unmask(out, v)).toBe('Acme Freight A/S then SHP12345678 and q@w.dk')
+  })
+
+  test('without rules only known values are replaced', () => {
+    const v = new Vault('k3f9')
+    mask('Acme Freight A/S', buildRules(config), v)
+    expect(cleanText('Acme Freight A/S then SHP12345678', v)).toBe(`${ph('CUSTOMER', 1, 'k3f9')} then SHP12345678`)
   })
 })

@@ -76,15 +76,31 @@ const PATH_KEY = /path|cwd|dir/i
 const RAW_TEXT_FIELDS = ['aiTitle', 'lastPrompt', 'summary']
 
 /**
+ * Masks text Claude Code stored on its own: first every value the vault knows,
+ * then, when `rules` are given, anything else they detect. The second step
+ * matters for output the model only saw part of (a long result is cut to a
+ * preview), whose unseen values the vault cannot know. New values found here
+ * get placeholders like any other; the model never saw them.
+ */
+export function cleanText(text: string, vault: Vault, rules: readonly Rule[] = []): string {
+  const known = hideKnownValues(text, vault)
+  return rules.length > 0 ? mask(known, rules, vault, { hints: false }) : known
+}
+
+/**
  * Masks the copies Claude Code keeps in a session's transcript outside the
  * rows the mod already masked: the queue record of each typed prompt, the
  * structured record of each tool result (`toolUseResult`), and generated
  * titles or summaries. Paths are left alone so resume and edit tracking work.
  * Lines that need no change are kept byte for byte.
  */
-export function cleanTranscript(text: string, vault: Vault): { text: string; changedLines: number } {
+export function cleanTranscript(
+  text: string,
+  vault: Vault,
+  rules: readonly Rule[] = [],
+): { text: string; changedLines: number } {
   let changedLines = 0
-  const hide = (v: string) => hideKnownValues(v, vault)
+  const hide = (v: string) => cleanText(v, vault, rules)
   const hideDeep = (v: unknown, key = ''): unknown => {
     if (typeof v === 'string') return PATH_KEY.test(key) ? v : hide(v)
     if (Array.isArray(v)) return v.map(x => hideDeep(x, key))
@@ -167,7 +183,7 @@ export function toolPolicy(masked: readonly string[], unmasked: readonly string[
   return tool => keep.some(r => r.test(tool)) && !allow.some(r => r.test(tool))
 }
 
-type Rule = {
+export type Rule = {
   label: string
   /** Finds the values (rules built from a pattern). */
   regex?: RegExp

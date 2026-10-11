@@ -4,6 +4,7 @@ import type { EngineInterface, Register, TurnStepChunk } from 'claude-code'
 import type { VaultEntry } from '../types'
 import {
   buildRules,
+  cleanText,
   cleanTranscript,
   DEFAULT_MASKED_TOOLS,
   mask,
@@ -127,7 +128,8 @@ async function readConfig($: EngineInterface): Promise<LoadedConfig> {
   const candidates: string[] = []
   const explicit = await $.env.get('CUSTOMER_MASK_CONFIG')
   if (explicit) candidates.push(explicit)
-  const home = await $.env.get('HOME')
+  // HOME on macOS and Linux; USERPROFILE on Windows, where HOME is usually unset.
+  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
   if (home) candidates.push(`${home}/${CONFIG_FILE}`)
   candidates.push(`${await $.session.cwd()}/${CONFIG_FILE}`)
 
@@ -344,25 +346,53 @@ function redactContent(content: readonly Block[]): Block[] {
     )
 }
 
+/** Most a mod can read in one call. */
+const MAX_READ = 4 * 1024 * 1024
+
 /**
- * Masks the copies Claude Code keeps in the transcript without passing them
- * through the mod (prompt queue records, tool results' structured records),
- * using the values the vault knows. Reads the file again before writing and
- * gives up rather than overwrite something written in between. A transcript
- * over 4 MiB cannot be read from a mod: tools/clean-transcripts.mjs does those.
+ * Rewrites one file with `clean`'s answer. Reads it again just before writing
+ * and gives up rather than overwrite something written in between; a file
+ * over 4 MiB cannot be read from a mod and is left (tools/clean-transcripts.mjs
+ * does those).
  */
-async function cleanSessionTranscript($: EngineInterface): Promise<void> {
-  if (transcriptPath === undefined || vault.size === 0) return
+async function rewriteFile($: EngineInterface, path: string, clean: (text: string) => string): Promise<void> {
   let original: string
   try {
-    original = await $.fs.read(transcriptPath)
+    original = await $.fs.read(path)
   } catch {
     return
   }
-  const { text, changedLines } = cleanTranscript(original, vault)
-  if (changedLines === 0) return
-  if ((await $.fs.read(transcriptPath)) !== original) return
-  await $.fs.write(transcriptPath, text)
+  const text = clean(original)
+  if (text === original) return
+  if ((await $.fs.read(path)) !== original) return
+  await $.fs.write(path, text)
+}
+
+/** The files in a folder of the session's, or none when it does not exist. */
+async function filesIn($: EngineInterface, dir: string, suffix: string): Promise<string[]> {
+  if (!(await $.fs.exists(dir))) return []
+  const entries = await $.fs.list(dir)
+  return entries.filter(f => f.kind === 'file' && f.name.endsWith(suffix) && f.size <= MAX_READ).map(f => `${dir}/${f.name}`)
+}
+
+/**
+ * Masks the copies Claude Code keeps on disk without passing them through the
+ * mod: in the transcript and the subagents' transcripts, the prompt queue
+ * records and tool results' structured records; in tool-results/, the full
+ * output of results too long to show the model whole. Uses the values the
+ * vault knows and, for values the model never saw, the detection rules.
+ */
+async function cleanSessionFiles($: EngineInterface): Promise<void> {
+  if (transcriptPath === undefined) return
+  const sessionDir = transcriptPath.replace(/\.jsonl$/, '')
+  const transcripts = [transcriptPath, ...(await filesIn($, `${sessionDir}/subagents`, '.jsonl'))]
+  for (const path of transcripts) await rewriteFile($, path, t => cleanTranscript(t, vault, rules).text)
+  for (const path of await filesIn($, `${sessionDir}/tool-results`, '.txt')) {
+    await rewriteFile($, path, t => cleanText(t, vault, rules))
+  }
+  // Values found only now get placeholders too; keep them, so a resumed
+  // session that reads a cleaned file can restore them.
+  await writeVaultFile($)
 }
 
 export const register: Register = on => {
@@ -392,7 +422,7 @@ export const register: Register = on => {
     const title = result.sessionTitle ?? maskText(e.prompt, { hints: false }).replace(/\s+/g, ' ').trim().slice(0, 60)
     await persist($, before)
     return { ...result, sessionTitle: title }
-  })
+  }).catch(async ($, e, next) => ({ ...(await next(e)), sessionTitle: `${NAME}: title withheld` }))
 
   // The model's reply: unmask as it streams, so the person reads real values.
   on('turn.step', async function* ($, e, next) {
@@ -453,6 +483,10 @@ export const register: Register = on => {
     const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text) } : s))
     await persist($, before)
     return { sections: [...masked, { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const }] }
+  }).catch(async ($, e, next) => {
+    // Masking failed: send the per-session sections' text as a note, not as it was.
+    const { sections } = await next(e)
+    return { sections: sections.map(s => (s.scope === 'session' ? { ...s, text: UNCHECKED_NOTE } : s)) }
   })
 
   // CLAUDE.md and the other blocks of the first message.
@@ -463,6 +497,10 @@ export const register: Register = on => {
     const blocks = result.blocks.map(b => ({ ...b, text: maskText(b.text) }))
     await persist($, before)
     return { ...result, blocks }
+  }).catch(async ($, e, next) => {
+    // Masking failed: send each context block's text as a note, not as it was.
+    const result = await next(e)
+    return { ...result, blocks: result.blocks.map(b => ({ ...b, text: UNCHECKED_NOTE })) }
   })
 
   // Text the engine injects on its own (mentioned files, reminders).
@@ -473,7 +511,7 @@ export const register: Register = on => {
     const masked = result.text === null ? result : { text: maskText(result.text) }
     await persist($, before)
     return masked
-  })
+  }).catch(() => ({ text: null })) // Masking failed: leave the injected text out.
 
   // Where the session's transcript is: the vault file goes beside it.
   on('classic.SessionStart', async ($, e, next) => {
@@ -486,7 +524,7 @@ export const register: Register = on => {
   // copies Claude Code wrote beside the masked rows.
   on('session.end', async ($, e, next) => {
     try {
-      await cleanSessionTranscript($)
+      await cleanSessionFiles($)
     } catch {
       // Best effort: the rows the model reads are masked either way.
     }

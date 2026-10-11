@@ -1,8 +1,8 @@
 # Rolling out to a team
 
-This guide makes customer-mask run for **everyone** in your organization: installed centrally, loaded before any mod a user installs, with one customer list maintained in one place. Users can't uninstall or disable it from inside Claude Code.
+This guide makes customer-mask run for **everyone** in your organization: installed centrally, loaded before any mod a user installs, with one customer list maintained in one place. Managed settings take precedence over users' own, so users can't turn it off in their settings; [What users can still do](#what-users-can-still-do) lists the exceptions.
 
-It uses Claude Code's managed settings, so you need whoever runs device management (MDM, Intune, Jamf, Ansible, …) for your developer machines. Every step below was tested with Claude Code 2.1.296.
+It uses Claude Code's managed settings, so you need whoever runs device management (MDM, Intune, Jamf, Ansible, …) for your developer machines. The Linux setup below was tested with Claude Code 2.1.296 (see [step 4](#4-check-it-on-a-machine)); the macOS and Windows paths are from Claude Code's documentation and were not tested.
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ Export your customers from the CRM as CSV, then turn the export into the mod's f
 
 ```bash
 node tools/build-customer-list.mjs --csv accounts.csv --column "Account Name" \
-     --hint-column "Industry" --patterns dsv-patterns.json \
+     --hint-column "Industry" --patterns patterns.json \
      --out /opt/claude-plugins/customers.json
 ```
 
@@ -53,7 +53,7 @@ node tools/build-customer-list.mjs --csv accounts.csv --column "Account Name" \
 - `--hint-column` (optional): a column that describes a customer **without identifying it**, such as industry. It becomes the customer's [hint](configuration.md#hints).
 - `--patterns` (optional): a JSON file whose `patterns` (shipment numbers, customer numbers, …) are copied into the output.
 
-Comma-, semicolon- and tab-separated files are all accepted, as is Excel's UTF-8 CSV. Duplicate names are kept once. The script needs Node 22+ and runs locally.
+Comma-, semicolon- and tab-separated files are all accepted, as is Excel's UTF-8 CSV. Duplicate names (ignoring case and spacing) are kept once. The script runs locally with any recent Node (tested with 22).
 
 Run it on a schedule (daily is usually enough) and distribute the output with MDM to the same path on every machine, again admin-writable only. For example, with cron:
 
@@ -91,8 +91,8 @@ Start from [`rollout/managed-settings.json`](../rollout/managed-settings.json):
 | Key | What it does |
 | --- | --- |
 | `extraKnownMarketplaces` | Registers the folder from step 1 (this repository is its own marketplace). |
-| `enabledPlugins` | Turns the mod on for everyone. Users can't turn a managed plugin off. |
-| `prependPlugins` | Runs the mod **first**, ahead of any mod a user installs, so it sees every row before other mods and has the final say on what is sent. `sec-default@builtin` keeps Claude Code's built-in guard in the chain; leave it in. |
+| `enabledPlugins` | Turns the mod on for everyone who receives these settings. |
+| `prependPlugins` | Runs the mod **first**: it sees every event before any mod a user installs and every result after them, so rows are masked before a user's mod sees them. (A user's mod could still add data of its own; the strict variant below keeps users' mods out.) `sec-default@builtin` keeps Claude Code's built-in guard in the chain; leave it in. |
 | `env` | Points every session at the central customer list from step 2. |
 
 On Windows, write paths with doubled backslashes: `"C:\\ProgramData\\claude-plugins\\customer-mask"`.
@@ -108,7 +108,7 @@ On Windows, write paths with doubled backslashes: `"C:\\ProgramData\\claude-plug
 "disableSideloadFlags": true
 ```
 
-- `allowManagedModsOnly`: no mod a user installs or writes loads at all, so nothing can run beside customer-mask and undo its work. Users' settings hooks and status lines keep working.
+- `allowManagedModsOnly`: no mod a user brings loads (installed, loaded with `--plugin-dir`, or written by Claude in a session), so no user mod can run beside customer-mask. Mods built into Claude Code still run, and users' settings hooks and status lines keep working.
 - `disableSideloadFlags`: `--plugin-dir`, `--plugin-url`, `--agents` and `--mcp-config` are refused at startup.
 
 ## 4. Check it on a machine
@@ -122,7 +122,7 @@ You want to see `hooks module customer-mask@customer-mask loaded (…, tier prep
 
 In an interactive session, the status line shows `🔒 customer-mask on`, and `/customer-mask` lists the config it loaded (it should name the central `customers.json`).
 
-**What was verified** (Claude Code 2.1.296, in an isolated test with real managed settings):
+**What was verified** (Claude Code 2.1.296 on Linux, in an isolated test with a real `/etc/claude-code/managed-settings.json`):
 
 | Check | Result |
 | --- | --- |
@@ -136,11 +136,11 @@ In an interactive session, the status line shows `🔒 customer-mask on`, and `/
 
 Be clear about the limits before you rely on this:
 
-- **`claude --safe-mode` and `claude --bare` start Claude Code without any plugins, this one included.** In 2.1.296 no managed setting blocks these flags. A user who deliberately starts that way sends unmasked data. Cover this with policy and training, or add a network-level control (e.g. route Claude traffic through a gateway you operate).
+- **`claude --safe-mode` and `claude --bare` start Claude Code without any plugins, this one included.** Anthropic's documentation confirms this for `--safe-mode`, and we found no managed setting in 2.1.296 that blocks these flags. A user who deliberately starts that way sends unmasked data. Cover this with policy and training, or add a network-level control (e.g. route Claude traffic through a gateway you operate).
 - **Data a pattern or the list doesn't cover is not masked.** See [open questions #5](open-questions.md#5-recall-customers-not-in-the-list).
 - **Headless session titles** are generated from the raw first prompt ([#1](open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt)).
 - `disableAllHooks: true` in managed settings turns this mod off too. Don't set it.
 
 ## Updating
 
-Copy the new release over the folder from step 1 (MDM). Sessions pick it up when they start; a running session can run `/reload-plugins`. Check the minimum Claude Code version in the release notes: the mod blocks requests on anything older than the version it was tested on.
+Copy the new release over the folder from step 1 (MDM). Sessions pick it up when they start; a running session can run `/reload-plugins`. Check `MIN_CLAUDE_CODE` in `hooks/masker.ts` first: the mod blocks every request on a Claude Code older than that version, so machines must be at least that new.

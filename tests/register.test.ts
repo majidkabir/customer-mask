@@ -20,6 +20,13 @@ type World = {
   sections?: { id: string; text: string; scope: 'shared' | 'session' }[]
   history?: { role: 'user' | 'assistant'; text: string; toolUses: never[] }[]
   version?: string
+  /** Environment variables the mod reads (default: HOME=/home/u). */
+  env?: Record<string, string>
+  /** What prompt.context and prompt.attachment answer from beneath. */
+  contextBlocks?: { name: string; text: string }[]
+  attachmentText?: string
+  /** Every file write fails (to make a hook throw part-way). */
+  failWrites?: boolean
   /** The conversation is not readable yet (early in a headless start). */
   historyUnavailable?: boolean
 }
@@ -33,7 +40,7 @@ function world(on: On, w: World = {}) {
   const files = w.files ?? { '/proj/.claude/customer-mask.json': CONFIG }
   const seen = { requestSent: false, ran: '', writes: {} as Record<string, string> }
 
-  mock.env(on, { HOME: '/home/u' })
+  mock.env(on, w.env ?? { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/proj' }))
   on('fs.read', ($, e) => {
     const text = files[e.path]
@@ -41,8 +48,9 @@ function world(on: On, w: World = {}) {
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('fs.exists', ($, e) => ({ value: e.path in files }))
+  on('fs.exists', ($, e) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
   on('fs.write', ($, e) => {
+    if (w.failWrites) return { deny: 'disk full' }
     seen.writes[e.path] = e.text
     files[e.path] = e.text
     return { value: undefined }
@@ -62,6 +70,15 @@ function world(on: On, w: World = {}) {
     return { result: { stdout: 'ok', stderr: '', interrupted: false } } as never
   })
   on('prompt.compose', () => ({ sections: w.sections ?? [] }))
+  on('prompt.context', () => ({ blocks: w.contextBlocks ?? [] }) as never)
+  on('prompt.attachment', () => ({ text: w.attachmentText ?? null }) as never)
+  on('fs.list', ($, e) => {
+    const prefix = `${e.path}/`
+    const names = Object.keys(files).filter(f => f.startsWith(prefix) && !f.slice(prefix.length).includes('/'))
+    return {
+      value: names.map(f => ({ name: f.slice(prefix.length), kind: 'file', size: (files[f] ?? '').length, mtimeMs: 0, isLink: false })),
+    } as never
+  })
   on('classic.UserPromptSubmit', () => ({}))
   on('session.messages', () =>
     w.historyUnavailable ? { deny: 'no session is bound in this process' } : { value: w.history ?? [] },
@@ -276,6 +293,57 @@ describe('/customer-mask reload', () => {
     expect(JSON.stringify(await reload($))).toContain('Reloaded')
     // (The test kit answers one model request per test, so the lifted block is read from the status.)
     expect(await status()).toContain('customer-mask: active')
+  })
+})
+
+describe('cleaning the rest of the session folder', () => {
+  test('values the model never saw, subagent transcripts and tool-results files are masked at session end', async ($, on) => {
+    const dir = '/home/u/.claude/projects/-proj/s1'
+    const files: Record<string, string> = {
+      '/proj/.claude/customer-mask.json': CONFIG,
+      [TRANSCRIPT]: JSON.stringify({ type: 'user', toolUseResult: { stdout: 'Acme Freight A/S SHP87654321 x@y.dk' } }),
+      [`${dir}/subagents/agent-a1.jsonl`]: JSON.stringify({ type: 'user', toolUseResult: { stdout: 'SHP11112222' } }),
+      [`${dir}/tool-results/t1.txt`]: 'full output: Acme Freight A/S, SHP99998888, z@y.dk',
+    }
+    const seen = world(on, { files })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    await appendPrompt($, 'Acme Freight A/S')
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1', resume: { id: 's1' } } as never)
+
+    const all = [TRANSCRIPT, `${dir}/subagents/agent-a1.jsonl`, `${dir}/tool-results/t1.txt`].map(f => seen.writes[f] ?? '')
+    for (const text of all) {
+      expect(text.length).toBeGreaterThan(0)
+      expect(text).not.toMatch(/Acme|SHP\d{8}|@y\.dk/)
+    }
+    // Values found only at the end are in the saved table, so they can still be restored.
+    const saved = JSON.parse(seen.writes[VAULT_FILE] ?? '{}')
+    expect(saved.entries.map((e: { value: string }) => e.value)).toContain('SHP99998888')
+  })
+})
+
+describe('failing closed in the prompt hooks', () => {
+  // Saving the placeholder table fails after masking started, so the hook throws part-way.
+  test('context blocks that cannot be masked are sent as a note, not as they were', async ($, on) => {
+    world(on, { contextBlocks: [{ name: 'claudeMd', text: 'Acme Freight A/S notes' }], failWrites: true })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    const { blocks } = await $.prompt.context({ blocks: [] } as never)
+    expect(blocks.map(b => b.text)).toEqual([expect.stringContaining('could not check this content')])
+  })
+
+  test('injected text that cannot be masked is left out', async ($, on) => {
+    world(on, { attachmentText: 'Acme Freight A/S was mentioned', failWrites: true })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    const result = await $.prompt.attachment({ type: 'todo_reminder', text: 'x' } as never)
+    expect(result.text).toBe(null)
+  })
+})
+
+describe('config file location', () => {
+  test('on Windows, where HOME is unset, the user file is read from USERPROFILE', async ($, on) => {
+    // (The test engine runs on Linux, where C:\\ is not an absolute path, so a POSIX path stands in.)
+    const files = { '/users/me/.claude/customer-mask.json': JSON.stringify({ customers: ['Zephyr Cargo ApS'] }) }
+    world(on, { files, env: { USERPROFILE: '/users/me' } })
+    expect(JSON.stringify((await appendPrompt($, 'Zephyr Cargo ApS')).message?.content)).not.toContain('Zephyr')
   })
 })
 

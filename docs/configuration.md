@@ -7,12 +7,12 @@ customer-mask reads up to three JSON files and **merges** them:
 | Order | File | Use it for |
 | --- | --- | --- |
 | 1 | the path in `$CUSTOMER_MASK_CONFIG` | a central list, e.g. synced from a CRM |
-| 2 | `~/.claude/customer-mask.json` | your own defaults across all projects |
-| 3 | `<project>/.claude/customer-mask.json` | customers specific to one repository |
+| 2 | `~/.claude/customer-mask.json` (`~` is `HOME`, or `USERPROFILE` on Windows) | your own defaults across all projects |
+| 3 | `.claude/customer-mask.json` in the folder Claude Code was started in | customers specific to one repository |
 
-`customers` and `patterns` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools` is taken from the last file that sets it, and `unmaskedTools` from all files combined.
+`customers`, `patterns` and `unmaskedTools` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools`, `media` and `nameVariants` are taken from the last file that sets them. A file that doesn't exist or can't be read is skipped.
 
-Config is read when the session starts. After editing it, run `/customer-mask reload` to apply it to the running session. A config that doesn't load (bad JSON, a pattern that doesn't compile, a wrong option) is **not** applied on reload: the working one stays in force and the command says why. At session start, a broken config blocks the session until it's fixed and reloaded.
+Config is read when the session starts. After editing it, run `/customer-mask reload` to apply it to the running session. A config that doesn't load (bad JSON, a pattern that doesn't compile, a `media` value other than `drop` or `allow`) is **not** applied on reload: the working one stays in force and the command says why. At session start, a broken config blocks the session until it's fixed and reloaded.
 
 With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 
@@ -62,7 +62,7 @@ A placeholder hides what Claude would otherwise know about a customer (industry,
 { "customers": [{ "name": "Acme Freight A/S", "hint": "Danish freight forwarder, ships to the Baltics" }] }
 ```
 
-The first time that customer appears in a session, Claude sees `<<CUSTOMER_1.k3f9>> [hint: Danish freight forwarder, ships to the Baltics]`. Later mentions show the placeholder alone. If Claude copies the hint into a file, command or tool call, it is dropped when the placeholder is restored, so it never ends up in your work. Hints are cut to one line of 120 characters.
+The first time that customer appears in text Claude reads, Claude sees `<<CUSTOMER_1.k3f9>> [hint: Danish freight forwarder, ships to the Baltics]`. Later mentions show the placeholder alone. Claude is told never to write the hint into files, commands or messages. If it repeats the `[hint: …]` right after the placeholder anyway, that part is dropped when the placeholder is restored. A hint paraphrased elsewhere is not detected. Hints are cut to one line of 120 characters.
 
 Write hints like this: *"Danish freight forwarder"* is fine. *"The freight forwarder that bought Baltic Haulage in 2024"* identifies the customer and defeats the point.
 
@@ -74,7 +74,7 @@ Write hints like this: *"Danish freight forwarder"* is fine. *"The freight forwa
 
 ### `patterns`: { label, regex, flags? }[]
 
-Your own identifiers. `regex` is a JavaScript regular expression written as a JSON string, so backslashes are doubled. `g` is added automatically, and you can add others such as `i`. The label becomes the placeholder name (`SHIPMENT` → `<<SHIPMENT_1>>`). It is upper-cased, and characters other than `A–Z 0–9 _` become `_`.
+Your own identifiers. `regex` is a JavaScript regular expression written as a JSON string, so backslashes are doubled. `g` is added automatically, and you can add others such as `i`. The label becomes the placeholder name (`SHIPMENT` → `<<SHIPMENT_1.k3f9>>`). It is upper-cased, characters other than `A–Z 0–9 _` become `_`, and anything before its first letter is dropped (an empty label becomes `DATA`).
 
 Anchor patterns with `\\b` so they don't match inside longer tokens. A pattern that doesn't compile **blocks the session** rather than being skipped.
 
@@ -109,7 +109,7 @@ Only list a tool here if you know where its server sends data.
 
 What happens to images and PDFs (screenshots, scanned invoices, pasted pictures). Text masking can't see inside them.
 
-- `drop` (default): they are removed before anything is stored or sent, and Claude gets a note that they were removed.
+- `drop` (default): they are removed before anything is stored or sent. Inside a tool result a note takes their place; in a prompt the note is added to the prompt's text.
 - `allow`: they are sent as they are. Only use this if you're sure no image in the project shows customer data.
 
 Any other value blocks the session.
@@ -120,7 +120,7 @@ The name list is where recall comes from: a customer that is missing from it is 
 
 1. **By hand** in `~/.claude/customer-mask.json`. Fine for a handful of key accounts.
 2. **A scheduled export** from the CRM or master-data system into a file, with `CUSTOMER_MASK_CONFIG` pointing at it. One JSON file with `customers` is enough.
-3. **A shared file managed centrally** (e.g. via MDM or a config repo) for a whole team.
+3. **A shared file managed centrally** (e.g. via MDM or a config repo) for a whole team. [Team rollout](team-rollout.md#2-maintain-one-customer-list) has a script that builds it from a CRM export.
 
 See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for detection beyond lists.
 
@@ -132,11 +132,15 @@ See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for d
 
 ```
 customer-mask: active
-Config: 2 customer name(s), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__* from /home/me/.claude/customer-mask.json
-Replaced this session (3):
-  <<CUSTOMER_1.k3f9>>  →  Acme Freight A/S
+Config: 2 customer name(s) (1 with a hint), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__*, images/PDFs: dropped from /home/me/.claude/customer-mask.json
+Images/PDFs removed this session: 0
+Rows removed because masking failed: 0
+Placeholder table saved to: /home/me/.claude/projects/-home-me-proj/5b1c0a2e.customer-mask.json
+Replaced this session (2):
   <<SHIPMENT_1.k3f9>>  →  SHP12345678
-  ...
+  <<CUSTOMER_1.k3f9>>  →  Acme Freight A/S
 ```
 
-This is answered locally by the mod, with no model turn. Claude Code keeps a command's output as a conversation row, and that row goes through the same masking as everything else, so the real values appear on your screen only.
+(Output for the example config above in a session that has seen `Acme Freight A/S, SHP12345678`; the session id is shortened.)
+
+This is answered locally by the mod, with no model turn. Claude Code stores a command's output as a conversation row, and that row is masked like any other, so the stored copy holds placeholders. `/customer-mask reload` re-reads the config files.
