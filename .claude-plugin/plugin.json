@@ -2,6 +2,10 @@
   "name": "customer-mask",
   "version": "0.3.0",
   "description": "Replaces customer data with placeholders before anything reaches the model, and restores it in replies and tool calls.",
-  "author": { "name": "Majid" },
-  "types": "./types/index.d.ts"
+  "author": {
+    "name": "Majid"
+  },
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "repository": "https://github.com/majidkabir/customer-mask"
 }

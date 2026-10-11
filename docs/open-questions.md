@@ -18,7 +18,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 12 | [Thinking blocks](#12-thinking-blocks) | Coverage | ℹ️ By design |
 | 13 | [Performance on large tool results](#13-performance-on-large-tool-results) | Engineering | ✅ Fixed in 0.2 |
 | 14 | [Mods API stability](#14-mods-api-stability) | Engineering | ✅ Minimum version enforced in 0.2 |
-| 15 | [Licence](#15-licence) | Repo | ❓ Decision needed |
+| 15 | [Licence](#15-licence) | Repo | ✅ MIT |
 
 ---
 
@@ -152,4 +152,4 @@ The mods API is marked *early access* and may change between releases. The tests
 
 ### 15. Licence
 
-No licence file has been added yet. Choose one (e.g. MIT or Apache-2.0) before others reuse the code, or keep the repo private if it becomes company-internal.
+**Fixed:** [MIT](../LICENSE). Anyone may use, copy, modify and distribute the code, including commercially, as long as the copyright notice is kept. The software comes without warranty.
