@@ -4,8 +4,13 @@ import type { VaultEntry } from '../types'
 
 export type PatternConfig = { label: string; regex: string; flags?: string }
 
-/** A customer with an optional hint: a short, non-identifying description Claude may see instead of the name. */
-export type CustomerEntry = { name: string; hint?: string }
+/**
+ * A customer with optional extras: a hint (a short, non-identifying
+ * description Claude may see instead of the name) and aliases (other text that
+ * identifies the customer, such as brands, an address, a website or a company
+ * registration number, masked as the same customer).
+ */
+export type CustomerEntry = { name: string; hint?: string; aliases?: string[] }
 
 export type MaskConfig = {
   /** Names to mask, as strings or as { name, hint }. */
@@ -299,12 +304,27 @@ export function buildRules(config: MaskConfig): Rule[] {
     })
   }
 
-  const customers = (config.customers ?? [])
+  const customers: Customer[] = (config.customers ?? [])
     .map(c => (typeof c === 'string' ? { name: c } : c))
-    .map(c => ({ name: String(c.name ?? '').trim(), hint: c.hint ? cleanHint(String(c.hint)) : '' }))
+    .map(c => ({
+      name: String(c.name ?? '').trim(),
+      hint: c.hint ? cleanHint(String(c.hint)) : '',
+      aliases: (Array.isArray(c.aliases) ? c.aliases : [])
+        .filter((a): a is string => typeof a === 'string')
+        .map(a => a.trim())
+        .filter(a => a.length > 1),
+    }))
     .filter(c => c.name.length > 1)
   if (customers.length > 0) {
-    rules.push(...(config.nameVariants === false ? [exactNameRule(customers)] : nameRules(customers)))
+    const names = config.nameVariants === false ? [exactNameRule(customers)] : nameRules(customers)
+    // Aliases first, so a longer alias that contains the name ("LEGO House") is taken whole.
+    const aliases = aliasRule(customers, config.nameVariants !== false)
+    rules.push(...(aliases ? [aliases] : []), ...names)
+    // Names glued into a host name ("legogroup.com"), after the names themselves.
+    if (config.nameVariants !== false) {
+      const glued = gluedHostRule(customers)
+      if (glued) rules.push(glued)
+    }
   }
 
   if (d.phone) {
@@ -427,7 +447,7 @@ function nameScanner(names: Iterable<string>, variant: boolean): (text: string, 
   }
 }
 
-type Customer = { name: string; hint: string }
+type Customer = { name: string; hint: string; aliases: string[] }
 
 /** The hints of a list of customers, keyed as `normalize` keys their values. */
 function hintMap(customers: readonly Customer[], normalize: (v: string) => string): Map<string, string> {
@@ -436,9 +456,17 @@ function hintMap(customers: readonly Customer[], normalize: (v: string) => strin
   return hints
 }
 
+/** How a name matched as listed is keyed: any case, any run of whitespace. */
+const exactKey = (v: string) => lower(v).replace(/\s+/g, ' ')
+/** How a name matched with variants is keyed: no legal suffix, case or separators. */
+const variantKey = (v: string) => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, '')
+
+/** Whether a customer's name is matched with variants (its core is long enough). */
+const usesVariants = (c: Customer) => stripSuffix(c.name).trim().replace(/[^\p{L}\p{N}]/gu, '').length >= 3
+
 /** Names as listed: any case, any run of whitespace between words. */
 function exactNameRule(customers: readonly Customer[]): Rule {
-  const normalize = (v: string) => lower(v).replace(/\s+/g, ' ')
+  const normalize = exactKey
   return {
     label: 'CUSTOMER',
     scan: nameScanner(customers.map(c => c.name), false),
@@ -449,7 +477,7 @@ function exactNameRule(customers: readonly Customer[]): Rule {
 
 /** Names without their legal suffix, with name variants (see `nameScanner`). */
 function variantNameRule(customers: readonly Customer[]): Rule {
-  const normalize = (v: string) => lower(stripSuffix(v)).replace(/[\s\-._,]+/g, '')
+  const normalize = variantKey
   return {
     label: 'CUSTOMER',
     scan: nameScanner(new Set(customers.map(c => stripSuffix(c.name).trim())), true),
@@ -463,12 +491,78 @@ function variantNameRule(customers: readonly Customer[]): Rule {
 function nameRules(customers: readonly Customer[]): Rule[] {
   const cores: Customer[] = []
   const exact: Customer[] = []
-  for (const c of customers) {
-    const core = stripSuffix(c.name).trim()
-    if (core.replace(/[^\p{L}\p{N}]/gu, '').length >= 3) cores.push(c)
-    else exact.push(c)
-  }
+  for (const c of customers) (usesVariants(c) ? cores : exact).push(c)
   return [...(cores.length ? [variantNameRule(cores)] : []), ...(exact.length ? [exactNameRule(exact)] : [])]
+}
+
+/** The key a customer's own name has in the vault, so aliases and glued names join the same customer. */
+function customerKey(c: Customer, variants: boolean): string {
+  return variants && usesVariants(c) ? variantKey(c.name) : exactKey(c.name)
+}
+
+/**
+ * Aliases: other text that identifies a customer (brands, an address, a
+ * website, a registration number), matched as listed (any case, any run of
+ * whitespace, whole words) and masked as that customer, each alias as its own
+ * spelling of it (CUSTOMER_1-2, ...).
+ */
+function aliasRule(customers: readonly Customer[], variants: boolean): Rule | undefined {
+  const owner = new Map<string, string>()
+  const hints = new Map<string, string>()
+  for (const c of customers) {
+    const key = customerKey(c, variants)
+    for (const a of c.aliases) if (!owner.has(exactKey(a))) owner.set(exactKey(a), key)
+    if (c.hint) hints.set(key, c.hint)
+  }
+  if (owner.size === 0) return undefined
+  return {
+    label: 'CUSTOMER',
+    scan: nameScanner(
+      [...owner.keys()],
+      false,
+    ),
+    normalize: v => owner.get(exactKey(v)) ?? exactKey(v),
+    hints,
+  }
+}
+
+/** A host name: labels of letters, digits and hyphens joined by dots, ending in a top-level domain. */
+const HOST = /(?<![\p{L}\p{N}.@-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?![\p{L}\p{N}-])/giu
+
+/**
+ * Customer names glued to another word inside a host name ("legogroup.com",
+ * "shop-acmefreight.dk"): a label that starts or ends with a customer's name,
+ * written without separators, is masked as that customer. Only names of 4 or
+ * more letters and digits, so short names don't catch unrelated domains.
+ * The whole label is replaced, so the host name is restored exactly.
+ */
+function gluedHostRule(customers: readonly Customer[]): Rule | undefined {
+  const keys = new Set(customers.filter(usesVariants).map(c => variantKey(c.name)).filter(k => k.length >= 4))
+  if (keys.size === 0) return undefined
+  const hints = new Map(customers.filter(c => c.hint && usesVariants(c)).map(c => [variantKey(c.name), c.hint]))
+  /** The customer key a label starts or ends with (the longest), if any. */
+  const keyIn = (label: string): string | undefined => {
+    const flat = label.toLowerCase().replace(/-/g, '')
+    let found: string | undefined
+    for (let n = 4; n <= flat.length; n++) {
+      for (const part of [flat.slice(0, n), flat.slice(flat.length - n)]) {
+        if (keys.has(part) && (found === undefined || part.length > found.length)) found = part
+      }
+    }
+    return found
+  }
+  return {
+    label: 'CUSTOMER',
+    scan: (text, onMatch) =>
+      text.replace(HOST, host =>
+        host
+          .split('.')
+          .map((label, i, all) => (i < all.length - 1 && keyIn(label) !== undefined ? onMatch(label) : label))
+          .join('.'),
+      ),
+    normalize: v => keyIn(v) ?? variantKey(v),
+    hints,
+  }
 }
 
 /** LABEL_n-k → { base: LABEL_n, label, n, k }; k is 1 for the first spelling. */
@@ -691,7 +785,8 @@ export function systemNote(vault: Vault): string {
   const b = vault.format('EMAIL_2')
   return (
     `Customer data in this conversation has been replaced with placeholders such as ${a} or ${b}. ` +
-    `A placeholder with a -2, -3 ... after its number, such as ${vault.format('CUSTOMER_1-2')}, is another spelling of the same value. ` +
+    `A placeholder with a -2, -3 ... after its number, such as ${vault.format('CUSTOMER_1-2')}, is another form of the same value: ` +
+    'for a customer, another spelling or another identifier of that customer (a brand, an address, a website). ' +
     'The first time a customer appears, its placeholder may be followed by [hint: ...], a short description the user gave ' +
     'for context; use it to understand the customer, but never write the hint into files, commands or messages. ' +
     'Use a placeholder exactly as written, including the part after the dot, wherever its real value belongs ' +

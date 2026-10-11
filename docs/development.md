@@ -21,7 +21,8 @@ customer-mask/
 ├── tools/
 │   ├── unmask.mjs           # restores real values in claude -p output, from the saved table
 │   ├── clean-transcripts.mjs # masks Claude Code's local copies in transcripts (large or older ones)
-│   └── build-customer-list.mjs # builds the customer list from a CRM export (CSV)
+│   ├── build-customer-list.mjs # builds the customer list from a CRM export (CSV)
+│   └── reid-test/           # can a model guess what's behind the placeholders? (cases + runner)
 ├── rollout/
 │   ├── managed-settings.json        # team rollout: enable for everyone, load first
 │   └── managed-settings.strict.json # same, plus only your organization's mods
@@ -36,7 +37,7 @@ customer-mask/
 ## Requirements
 
 - Claude Code **2.1.296+**. Mods exist from 2.1.287, but this mod is tested on 2.1.296 and blocks every request on 2.1.287 to 2.1.295: a hook missing on an older build would silently mask nothing. (Before 2.1.287 there are no mods, so it can't run at all.) The minimum is `MIN_CLAUDE_CODE` in `hooks/masker.ts`; raise it when a release starts depending on newer behaviour.
-- Node: 22.18+ for `tools/clean-transcripts.mjs` (it imports the mod's TypeScript directly); any recent Node for the other tools and for `tsc`. The mod itself needs no Node: it runs inside Claude Code.
+- Node: 22.18+ for `tools/clean-transcripts.mjs` and `tools/reid-test/run.mjs` (they import the mod's TypeScript directly); any recent Node for the other tools and for `tsc`. The mod itself needs no Node: it runs inside Claude Code.
 
 ## Run it locally
 
@@ -69,7 +70,7 @@ The tests build placeholder strings at run time (`ph()`) rather than writing the
 
 ## What has been verified
 
-Besides the 79 automated tests (including `tests/scale.test.ts`, which fails if building the rules and masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model, with Claude Code 2.1.296 on Linux. The marker shown as `k3f9` is random in each run.
+Besides the 88 automated tests (including `tests/scale.test.ts`, which fails if building the rules and masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model, with Claude Code 2.1.296 on Linux. The marker shown as `k3f9` is random in each run.
 
 | Version | Check | Result |
 | --- | --- | --- |
@@ -87,6 +88,7 @@ Besides the 79 automated tests (including `tests/scale.test.ts`, which fails if 
 | 0.4 | `claude plugin install customer-mask --marketplace majidkabir/customer-mask` into an empty config, then a session | installs from GitHub, loads, masks ✅ |
 | 0.4 | A subagent reads the CSV | its rows and transcript hold placeholders only ✅ |
 | 0.4.1 | A 251 KB command output (the model sees only a preview) | after the session, no file holds a real value except the placeholder table ✅ |
+| 0.5 | Can Haiku or Sonnet guess the customers behind the placeholders? | from context, often; see [#19](open-questions.md#19-re-identification-from-context) ⚠️ |
 
 To reproduce the basic check, put a CSV and a `.claude/customer-mask.json` in an empty folder, then:
 

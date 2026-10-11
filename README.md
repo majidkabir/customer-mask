@@ -89,8 +89,10 @@ It shows the config it loaded and every value it has replaced so far. The status
 | Arguments of `WebSearch`, `WebFetch` and every MCP tool (they can leave your machine) | ✅ kept masked; local MCP tools can be exempted |
 | Automatic session title | ❌ in headless runs (`claude -p`, SDK) the raw first prompt goes to a small model to make the title; interactive sessions not yet checked ([open questions #1](docs/open-questions.md#1-headless-session-title-is-generated-from-the-raw-prompt)) |
 | Images and PDFs | ✅ removed before sending; Claude is told why (configurable) |
-| Spelling variants of listed customers (`Acme Freight`, `ACME FREIGHT ApS`, `acme-freight`) | ✅ |
+| Spelling variants of listed customers (`Acme Freight`, `ACME FREIGHT ApS`, `acme-freight`, `acmefreightgroup.com`) | ✅ |
+| Other identifiers you list per customer: brands, addresses, websites ([aliases](docs/configuration.md#aliases)) | ✅ |
 | Customer names that are in neither your list nor a pattern | ❌ detection is list- and pattern-based |
+| What the rest of the text gives away (a city, the goods, a product) | ❌ masking hides values, not context: Claude named 3–4 of 5 well-known customers from city and goods ([test](docs/open-questions.md#19-re-identification-from-context)) |
 
 If the mod itself fails, it fails closed. A broken config, an unreadable placeholder table or an unsupported Claude Code version **blocks** every request. Anything that can't be masked in time (a conversation row, a context block, part of the system prompt) is sent **with its text replaced by a note**, injected text is left out, and a tool call whose arguments can't be restored is denied. The ❌ rows above and the [open questions](docs/open-questions.md) are the known gaps.
 
@@ -104,7 +106,7 @@ If the mod itself fails, it fails closed. A broken config, an unreadable placeho
 
 ## Status
 
-Version 0.4.1, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.5, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
 
 ## License
 

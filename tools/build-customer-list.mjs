@@ -5,23 +5,27 @@
 //
 //   node tools/build-customer-list.mjs --csv accounts.csv --column "Account Name" --out customers.json
 //   node tools/build-customer-list.mjs --csv accounts.csv --column "Account Name" \
-//        --hint-column "Industry" --out customers.json
+//        --hint-column "Industry" --alias-columns "Website,Brands,Street" --out customers.json
 //
 // Options:
 //   --csv <file>           the export; comma, semicolon or tab separated, quoted fields allowed
 //   --column <name>        the column holding the customer name
 //   --hint-column <name>   optional: a column whose value becomes the customer's hint
 //                          (pick one that does NOT identify the customer, e.g. industry)
+//   --alias-columns <a,b>  optional: columns whose values also identify the customer (website,
+//                          brands, street address, registration number); they become its aliases.
+//                          A cell may hold several values separated by ; or |
 //   --out <file>           where to write the JSON (default: print it)
 //   --patterns <file>      optional: a JSON file whose "patterns" are copied into the output
 //
-// Duplicates (same name ignoring case and spacing) are kept once. Runs locally.
+// Duplicates (same name ignoring case and spacing) are kept once; their aliases are combined.
+// Runs locally.
 
 import { readFileSync, writeFileSync } from 'node:fs'
 
 function usage(message) {
   if (message) process.stderr.write(`build-customer-list: ${message}\n`)
-  process.stderr.write('usage: node tools/build-customer-list.mjs --csv <file> --column <name> [--hint-column <name>] [--out <file>] [--patterns <file>]\n')
+  process.stderr.write('usage: node tools/build-customer-list.mjs --csv <file> --column <name> [--hint-column <name>] [--alias-columns <a,b>] [--out <file>] [--patterns <file>]\n')
   process.exit(2)
 }
 
@@ -32,6 +36,7 @@ const column = opt('--column')
 const hintColumn = opt('--hint-column')
 const outFile = opt('--out')
 const patternsFile = opt('--patterns')
+const aliasColumns = (opt('--alias-columns') ?? '').split(',').map(c => c.trim()).filter(Boolean)
 if (!csvFile || !column) usage('--csv and --column are required')
 
 /** Parses CSV text (RFC 4180 quoting) with the given delimiter into rows of fields. */
@@ -70,6 +75,7 @@ const find = name => {
 }
 const nameAt = find(column)
 const hintAt = hintColumn ? find(hintColumn) : -1
+const aliasAt = aliasColumns.map(find)
 
 const seen = new Map()
 let skipped = 0
@@ -77,9 +83,19 @@ for (const row of rows) {
   const name = (row[nameAt] ?? '').trim().replace(/\s+/g, ' ')
   if (name.length < 2) { skipped++; continue }
   const key = name.toLowerCase()
-  if (seen.has(key)) continue
+  const aliases = aliasAt
+    .flatMap(i => (row[i] ?? '').split(/[;|]/))
+    .map(a => a.trim().replace(/\s+/g, ' '))
+    .filter(a => a.length > 1 && a.toLowerCase() !== key)
+  const known = seen.get(key)
+  if (known) {
+    if (aliases.length && typeof known !== 'string') known.aliases = [...new Set([...(known.aliases ?? []), ...aliases])]
+    else if (aliases.length) seen.set(key, { name: known, aliases: [...new Set(aliases)] })
+    continue
+  }
   const hint = hintAt >= 0 ? (row[hintAt] ?? '').trim() : ''
-  seen.set(key, hint ? { name, hint } : name)
+  const entry = { name, ...(hint && { hint }), ...(aliases.length && { aliases: [...new Set(aliases)] }) }
+  seen.set(key, Object.keys(entry).length === 1 ? name : entry)
 }
 
 const out = { customers: [...seen.values()] }
@@ -88,6 +104,8 @@ const json = JSON.stringify(out, null, 2) + '\n'
 if (outFile) writeFileSync(outFile, json)
 else process.stdout.write(json)
 process.stderr.write(
-  `${seen.size} customer(s)${hintAt >= 0 ? `, ${out.customers.filter(c => typeof c !== 'string').length} with a hint` : ''}` +
+  `${seen.size} customer(s)` +
+    `${hintAt >= 0 ? `, ${out.customers.filter(c => typeof c !== 'string' && c.hint).length} with a hint` : ''}` +
+    `${aliasAt.length ? `, ${out.customers.filter(c => typeof c !== 'string' && c.aliases).length} with aliases` : ''}` +
     `${skipped ? `, ${skipped} row(s) without a usable name skipped` : ''}${outFile ? `, written to ${outFile}` : ''}\n`,
 )

@@ -154,9 +154,13 @@ Rules run in a fixed order, and the first rule to claim a span wins.
 | 3 | `CPR` | `010190-1234` | Hyphenated only. A bare 10-digit run is too often a timestamp |
 | 4 | *your labels* | your `patterns` regexes | e.g. `SHIPMENT`, `CUSTOMER_NO` |
 | 5 | `CUSTOMER` | names from `customers` | Any case. By default (see [`nameVariants`](configuration.md#namevariants-boolean)) also with or without a legal suffix (`A/S`, `ApS`, `GmbH`, `Ltd`, …) and any separator between words (space, hyphen, dot, underscore, none). Whole words only (`Lego` won't match `Legolas`). Longest name first. Two-letter suffixes such as `AS` or `Co` only count in that exact case, so *Acme as well* keeps its *as* |
+| 5 | `CUSTOMER` | [aliases](configuration.md#aliases) of listed customers | As listed, any case, whole words; run just before the names, so a longer alias wins. Masked as the same customer |
+| 5 | `CUSTOMER` | customer names glued into a host name (`acmefreightgroup.com`) | Host name labels that start or end with a listed name of 4+ letters and digits; run after the names. Masked as the same customer, the whole label replaced |
 | 6 | `PHONE` | `+45 12 34 56 78`, `12 34 56 78` | International, or Danish 2-2-2-2 grouping |
 
-Detection is deliberately conservative. A false positive in code (masking a timestamp) changes what Claude sees, so the built-ins aim for precision. Recall for names comes from your list.
+Detection is deliberately conservative. A false positive in code (masking a timestamp) changes what Claude sees, so the built-ins aim for precision. Recall for names comes from your list and its aliases.
+
+Masking hides values, not what the text around them says. A city, the goods shipped or a product can identify a well-known customer; see the [re-identification test](open-questions.md#19-re-identification-from-context).
 
 ## 6. Unmasking a stream
 

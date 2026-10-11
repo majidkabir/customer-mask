@@ -22,6 +22,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 16 | [Prompt hooks failing open](#16-prompt-hooks-failing-open) | Correctness | ✅ Fixed in 0.4.1 |
 | 17 | [User config file on Windows](#17-user-config-file-on-windows) | Correctness | ✅ Fixed in 0.4.1 |
 | 18 | [What the screen shows](#18-what-the-screen-shows) | UX | ℹ️ Partly checked |
+| 19 | [Re-identification from context](#19-re-identification-from-context) | Leak | ⚠️ Measured; reduced in 0.5, can't be removed |
 
 ---
 
@@ -78,7 +79,9 @@ Names are only masked if they are in `customers` or match a pattern.
 
 **Fixed (0.2): spelling variants of listed names.** A listed name now also matches without or with another legal suffix, in any case, and with any separator (`Acme Freight`, `Acme Freight ApS`, `acme-freight`, `AcmeFreight`). Each spelling keeps its own token sharing the customer's number (`CUSTOMER_1`, `CUSTOMER_1-2`), so it is restored exactly. This also fixed a bug where spellings differing only in case shared one token and Claude's Edit tool could fail. Verified live: an Edit on a file with three spellings of one customer applied cleanly, every spelling unchanged.
 
-**Still open:** customers not in the list at all, abbreviations, and misspellings.
+**Added (0.5):** [aliases](configuration.md#aliases) per customer (brands, addresses, websites, abbreviations), and names glued into a host name (`legogroup.com`), both masked as the same customer.
+
+**Still open:** customers not in the list at all, misspellings, and names glued to another word outside host names.
 - Generate the list from the CRM on a schedule (see [configuration](configuration.md#keeping-the-customer-list-current)). This is the recommended next step.
 - Add NER-based detection, such as a local [Microsoft Presidio](https://microsoft.github.io/presidio/) service called through `$.http`. This catches person and organisation names, but it adds a local service, latency, and false positives in code.
 - Edit-distance matching for misspellings: risky in code, where near-misses are common.
@@ -107,11 +110,11 @@ Names are only masked if they are in `customers` or match a pattern.
 
 ### 9. Is pseudonymisation enough for compliance?
 
-Placeholders are **pseudonymisation**, not anonymisation. Context can still re-identify a customer ("the Danish freight forwarder in Aarhus with 40 trucks"), and under GDPR pseudonymised data can still be personal data. Questions for legal / the DPO:
+Placeholders are **pseudonymisation**, not anonymisation. Context can still re-identify a customer, and we measured it ([#19](#19-re-identification-from-context)): from the city and goods in a shipment list, Claude named 3–4 of 5 well-known Danish companies. Under GDPR pseudonymised data can still be personal data. Questions for legal / the DPO:
 
 - Does this meet the company's policy for sending customer data to an AI provider, or is it defence-in-depth on top of an approved enterprise agreement?
 - Which data classes must be masked: names, contacts, contract values, shipment contents?
-- Does the residual risk from #1, #5, #10 and #18 need sign-off?
+- Does the residual risk from #1, #5, #10, #18 and #19 need sign-off?
 
 ### 10. Enforcing it for a team
 
@@ -123,7 +126,7 @@ Placeholders are **pseudonymisation**, not anonymisation. Context can still re-i
 
 Claude sees a placeholder instead of a name, so it loses world knowledge about that customer (industry, country). For most coding and data tasks this doesn't matter, but drafted emails and summaries can turn generic.
 
-**Fixed (0.4):** a customer entry can carry a non-identifying [`hint`](configuration.md#hints), shown to Claude once, after that customer's first placeholder. Claude is told never to write the hint out; a `[hint: …]` it repeats right after a placeholder is dropped when the placeholder is restored (a paraphrase elsewhere is not detected). Verified live: Claude described the customer from the hint and tailored an email subject to it, and the saved file held the real name with no hint text. Answer quality overall still hasn't been measured systematically.
+**Fixed (0.4):** a customer entry can carry a non-identifying [`hint`](configuration.md#hints), shown to Claude once, after that customer's first placeholder. Claude is told never to write the hint out; a `[hint: …]` it repeats right after a placeholder is dropped when the placeholder is restored (a paraphrase elsewhere is not detected). Verified live: Claude described the customer from the hint and tailored an email subject to it, and the saved file held the real name with no hint text. Answer quality overall still hasn't been measured systematically. The flip side was measured ([#19](#19-re-identification-from-context)): a descriptive hint can identify a well-known customer by itself.
 
 ### 12. Thinking blocks
 
@@ -172,3 +175,29 @@ The mods API is marked *early access* and may change between releases. The tests
 ### 18. What the screen shows
 
 `session.append` rewrites a row before it is stored and sent, and Claude Code documents that the screen may show a row as it was before that rewrite. Checked: the streamed reply carries real values (stream-json text deltas), and in the SDK's `stream-json` output tool results arrive masked. Not checked: whether the interactive terminal and desktop app show your prompt and tool output masked or not. Either way the model and the stored transcript only get placeholders.
+
+### 19. Re-identification from context
+
+**Question:** can Claude, or any model, guess the real value behind a placeholder?
+
+**Test:** `tools/reid-test/run.mjs` masks seven short documents with the mod's own code, sends only the masked text to Claude (Haiku and Sonnet, in safe mode, without the mod), and asks it to guess every placeholder. The customers are five well-known Danish companies on purpose, since a model can only name a company it has heard of. Two runs per model, 2026-10-11, Claude Code 2.1.296:
+
+| Case | What the masked text still says | Haiku | Sonnet |
+| --- | --- | --- | --- |
+| Invoice line | nothing but amounts | 0/1, 0/1 | 0/1, 0/1 |
+| Code | nothing but IDs | 0/1, 0/1 | 0/1, 0/1 |
+| Shipment list, 5 customers | origin city and goods | 0/5, 4/5 | 4/5, 4/5 |
+| Email with signature | town, address, product lines | 1/1 (90%), 1/1 (90%) | 1/1 (90%), 1/1 (90%) |
+| Same email, brands, address and town as [aliases](configuration.md#aliases) | "a distribution centre in Jiaxing", "holiday season", "sets" | 1/1 (85%), 1/1 (90%) | 1/1 (45%), 1/1 (60%) |
+| Hint: "toy manufacturer famous for interlocking plastic bricks" | the hint | 1/1 (92%), 1/1 (85%) | 1/1 (97%), 1/1 (97%) |
+| Hint: "Danish manufacturer, consumer goods" | the hint | 0/1, 0/1 | 1/1 (25%), 1/1 (30%) |
+
+Percentages are the model's own confidence in its correct guess. Shipment numbers were never guessed. In one Haiku run the model answered "unknown" for everything, so results vary between runs.
+
+**What it shows:**
+- A placeholder carries nothing by itself. What gives a customer away is the rest of the text: a city, the goods, a product, an address, or a hint. Any capable model, or a person with a search engine, can do the same, so this is about the data, not about Claude.
+- It applies to customers a model knows about. A small, private customer is much harder to name, though an address or a website still identifies it to anyone who looks it up.
+- The first run of the test found a gap: `legogroup.com` stayed unmasked because the name was glued to another word. **Fixed in 0.5**, together with per-customer aliases. Aliases lowered the larger model's confidence (90% → 45–60%) but did not stop the guess, because the text still held other clues.
+
+**What to do:** list the identifiers you know as aliases, keep hints vague, and treat masking as risk reduction, not anonymisation. Run `node tools/reid-test/run.mjs` against your own kinds of documents to see what your data gives away. It makes one model call per case, model and run on your account. (A re-identification test is only meaningful with real, well-known names, so don't run it on real customer data you're not allowed to send.)
+

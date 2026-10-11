@@ -347,6 +347,15 @@ describe('config file location', () => {
   })
 })
 
+describe('aliases and glued names in a session', () => {
+  test('a customer alias and a glued host name are masked before the model sees them', async ($, on) => {
+    const config = JSON.stringify({ customers: [{ name: 'LEGO A/S', aliases: ['DUPLO'] }] })
+    world(on, { files: { '/proj/.claude/customer-mask.json': config } })
+    const stored = JSON.stringify((await appendPrompt($, 'DUPLO stock, see legogroup.com')).message?.content)
+    expect(stored).not.toMatch(/duplo|lego/i)
+  })
+})
+
 describe('Claude Code version', () => {
   test('an older Claude Code blocks every request', async ($, on) => {
     const seen = world(on, { version: '2.1.290' })

@@ -376,3 +376,71 @@ describe('cleaning with the rules', () => {
     expect(cleanText('Acme Freight A/S then SHP12345678', v)).toBe(`${ph('CUSTOMER', 1, 'k3f9')} then SHP12345678`)
   })
 })
+
+describe('customer names glued into host names', () => {
+  const rules = buildRules({ customers: ['LEGO A/S', 'Acme Freight A/S', 'AB A/S'] })
+
+  test('a host label that starts or ends with a customer name is that customer, restored exactly', () => {
+    const v = new Vault('k3f9')
+    const text = 'see legogroup.com/careers, shop-acmefreight.dk and www.lego.com'
+    const masked = mask(text, rules, v)
+    expect(masked).not.toMatch(/lego|acme/i)
+    // legogroup and lego are one customer; the order of the rules decides which form gets the base number.
+    const numberOf = (value: string) => new Set(v.entries().filter(e => e.value === value).map(e => e.token.split('-')[0]))
+    expect([...numberOf('legogroup')]).toEqual([...numberOf('lego')])
+    expect(unmask(masked, v)).toBe(text)
+  })
+
+  test('short names do not glue, the top-level domain is never a match, and plain words are left alone', () => {
+    const v = new Vault('k3f9')
+    expect(mask('abcorp.com and example.legoland', rules, v)).toBe('abcorp.com and example.legoland')
+    expect(mask('the legogroup team', rules, v)).toBe('the legogroup team')
+  })
+
+  test('emails are still masked whole as emails', () => {
+    expect(mask('mail hr@legogroup.com', rules, new Vault('k3f9'))).toBe(`mail ${ph('EMAIL', 1, 'k3f9')}`)
+  })
+})
+
+describe('customer aliases', () => {
+  const rules = buildRules({
+    customers: [
+      { name: 'LEGO A/S', hint: 'Danish toy manufacturer', aliases: ['DUPLO', 'Aastvej 1', 'LEGO House'] },
+      'Nordic Widgets',
+    ],
+  })
+
+  test('aliases are masked as the same customer and restored exactly', () => {
+    const v = new Vault('k3f9')
+    const text = 'LEGO A/S ships duplo sets from Aastvej  1.'
+    const masked = mask(text, rules, v)
+    expect(masked).not.toMatch(/lego|duplo|aastvej/i)
+    const tokens = [...masked.matchAll(/<<(CUSTOMER_[\d-]+)\.k3f9>>/g)].map(m => m[1] ?? '')
+    expect(new Set(tokens.map(t => t.split('-')[0])).size).toBe(1)
+    expect(unmask(masked, v)).toBe(text)
+  })
+
+  test('a longer alias that contains the name is taken whole', () => {
+    const masked = mask('Visit LEGO House today', rules, new Vault('k3f9'))
+    expect(masked).toMatch(/^Visit <<CUSTOMER_1\.k3f9>> \[hint: Danish toy manufacturer\] today$/)
+  })
+
+  test('the hint is shown once per customer, whichever form comes first', () => {
+    const v = new Vault('k3f9')
+    const out = mask('DUPLO and LEGO A/S and Aastvej 1', rules, v)
+    expect(out.match(/\[hint:/g)?.length).toBe(1)
+    expect(out.startsWith(`${ph('CUSTOMER', 1, 'k3f9')} [hint: Danish toy manufacturer]`)).toBe(true)
+  })
+
+  test('aliases also work with nameVariants: false', () => {
+    const r = buildRules({ customers: [{ name: 'LEGO A/S', aliases: ['DUPLO'] }], nameVariants: false })
+    const out = mask('LEGO A/S and DUPLO', r, new Vault('k3f9'))
+    expect(out).not.toMatch(/lego|duplo/i)
+    expect(new Set([...out.matchAll(/CUSTOMER_(\d+)/g)].map(m => m[1])).size).toBe(1)
+  })
+
+  test('non-string aliases are ignored', () => {
+    const r = buildRules({ customers: [{ name: 'LEGO A/S', aliases: [42, 'DUPLO'] as never }] })
+    expect(mask('DUPLO', r, new Vault('k3f9'))).toBe(ph('CUSTOMER', 1, 'k3f9'))
+  })
+})

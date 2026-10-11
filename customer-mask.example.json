@@ -2,7 +2,11 @@
   "customers": [
     {
       "name": "Acme Freight A/S",
-      "hint": "Danish freight forwarder"
+      "hint": "Danish freight forwarder",
+      "aliases": [
+        "AcmeTrack",
+        "Havnegade 12"
+      ]
     },
     "Nordic Widgets ApS"
   ],

@@ -6,3 +6,5 @@ node_modules/
 # Real customer lists never belong in the repo
 .claude/customer-mask.json
 customer-mask.json
+# Re-identification test output (holds model answers)
+tools/reid-test/results-*.json

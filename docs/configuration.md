@@ -21,7 +21,7 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 ```json
 {
   "customers": [
-    { "name": "Acme Freight A/S", "hint": "Danish freight forwarder" },
+    { "name": "Acme Freight A/S", "hint": "Danish freight forwarder", "aliases": ["AcmeTrack", "Havnegade 12"] },
     "Nordic Widgets ApS"
   ],
   "patterns": [
@@ -37,7 +37,7 @@ With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 }
 ```
 
-### `customers`: (string | { name, hint })[]
+### `customers`: (string | { name, hint, aliases })[]
 
 Names to mask. Matching is whole-word and ignores case. By default each name also matches its common variants (see [`nameVariants`](#namevariants-boolean)), so listing `Acme Freight A/S` also catches:
 
@@ -46,12 +46,14 @@ Names to mask. Matching is whole-word and ignores case. By default each name als
 | `Acme Freight` | legal suffix left out |
 | `Acme Freight ApS`, `Acme Freight GmbH`, `Acme Freight, Inc.` | another legal suffix |
 | `acme-freight`, `ACME.FREIGHT`, `AcmeFreight`, `acme_freight_id` | other separators or none |
+| `acmefreightgroup.com`, `shop-acmefreight.dk` | the name glued to another word inside a host name (names of 4 or more letters and digits) |
 
 All of these are the same customer (`CUSTOMER_1`, `CUSTOMER_1-2`, …), and each is restored exactly as written. Longer names win over shorter ones.
 
 Tips:
 
-- Abbreviations and nicknames (`AF`, `Acme`) still need their own entry.
+- Abbreviations and nicknames (`AF`, `Acme`) still need an entry, as an [alias](#aliases) of the customer.
+- A host name that merely starts or ends with a customer's name is masked too (`acmevideo.com` for `Acme`). That errs on the side of hiding; it is restored exactly when Claude uses it. A name glued to another word outside a host name (`AcmeFreightGroup` in prose or code) is not caught; add it as an alias.
 - Very short or common words (`Shell`, `Apple`, `Target`) will also mask ordinary uses of the word in code and prose. That is safe, but it can confuse Claude. Prefer the full legal name where you can.
 
 #### Hints
@@ -64,7 +66,19 @@ A placeholder hides what Claude would otherwise know about a customer (industry,
 
 The first time that customer appears in text Claude reads, Claude sees `<<CUSTOMER_1.k3f9>> [hint: Danish freight forwarder, ships to the Baltics]`. Later mentions show the placeholder alone. Claude is told never to write the hint into files, commands or messages. If it repeats the `[hint: …]` right after the placeholder anyway, that part is dropped when the placeholder is restored. A hint paraphrased elsewhere is not detected. Hints are cut to one line of 120 characters.
 
-Write hints like this: *"Danish freight forwarder"* is fine. *"The freight forwarder that bought Baltic Haulage in 2024"* identifies the customer and defeats the point.
+Write hints like this: *"Danish freight forwarder"* is fine. *"The freight forwarder that bought Baltic Haulage in 2024"* identifies the customer and defeats the point. For a well-known company even a short description can: in the [re-identification test](open-questions.md#19-re-identification-from-context), *"Danish toy manufacturer famous for interlocking plastic bricks"* let both Claude models name LEGO with 85–97% confidence, while *"Danish manufacturer, consumer goods"* only let the larger model guess it, at 25–30%.
+
+#### Aliases
+
+Other text that identifies a customer: brands and products, a street address, a website, a company registration number, an abbreviation.
+
+```json
+{ "customers": [{ "name": "LEGO A/S", "aliases": ["DUPLO", "Technic", "Aastvej 1", "CVR 12345678"] }] }
+```
+
+Each alias is masked as **the same customer** (`CUSTOMER_1-2`, `CUSTOMER_1-3`, …), so Claude knows it belongs to that customer, and each is restored exactly as written. Aliases match as listed: any case, any run of whitespace between words, whole words only. A longer alias wins over the name inside it (`LEGO House` is one placeholder, not two).
+
+Aliases remove the identifiers you know about, not every hint the text gives. In the [re-identification test](open-questions.md#19-re-identification-from-context), masking the brands, address and town in an email still left "a distribution centre in Jiaxing", and the models guessed the customer from that. Don't list ordinary words (`Billund` masks the town everywhere, for every customer), and treat this as risk reduction, not anonymisation.
 
 ### `nameVariants`: boolean
 

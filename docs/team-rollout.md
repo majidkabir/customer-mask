@@ -45,15 +45,16 @@ Export your customers from the CRM as CSV, then turn the export into the mod's f
 
 ```bash
 node tools/build-customer-list.mjs --csv accounts.csv --column "Account Name" \
-     --hint-column "Industry" --patterns patterns.json \
+     --hint-column "Industry" --alias-columns "Website,Brands" --patterns patterns.json \
      --out /opt/claude-plugins/customers.json
 ```
 
 - `--column`: the column holding the customer name.
 - `--hint-column` (optional): a column that describes a customer **without identifying it**, such as industry. It becomes the customer's [hint](configuration.md#hints).
+- `--alias-columns` (optional): columns whose values also identify the customer, such as website, brands or street address. They become its [aliases](configuration.md#aliases). A cell can hold several values separated by `;` or `|`.
 - `--patterns` (optional): a JSON file whose `patterns` (shipment numbers, customer numbers, …) are copied into the output.
 
-Comma-, semicolon- and tab-separated files are all accepted, as is Excel's UTF-8 CSV. Duplicate names (ignoring case and spacing) are kept once. The script runs locally with any recent Node (tested with 22).
+Comma-, semicolon- and tab-separated files are all accepted, as is Excel's UTF-8 CSV. Duplicate names (ignoring case and spacing) are kept once, with their aliases combined. The script runs locally with any recent Node (tested with 22).
 
 Run it on a schedule (daily is usually enough) and distribute the output with MDM to the same path on every machine, again admin-writable only. For example, with cron:
 

@@ -1,0 +1,189 @@
+{
+  "_note": "Public, well-known companies on purpose: a model can only name a customer it has heard of. Documents are invented examples.",
+  "cases": [
+    {
+      "id": "no-context",
+      "title": "Invoice line with nothing but a placeholder",
+      "config": {
+        "customers": [
+          "LEGO A/S",
+          "Novo Nordisk A/S",
+          "Carlsberg A/S",
+          "Vestas Wind Systems A/S",
+          "A.P. Moller - Maersk A/S"
+        ],
+        "patterns": [
+          {
+            "label": "SHIPMENT",
+            "regex": "\\bSHP\\d{8}\\b"
+          }
+        ]
+      },
+      "document": "Invoice 4471 for Carlsberg A/S: 3 pallets, 1,200 kg, payment due in 30 days. Shipment SHP10004471.\n",
+      "expect": {
+        "Carlsberg A/S": [
+          "carlsberg"
+        ]
+      }
+    },
+    {
+      "id": "code",
+      "title": "Code that only uses IDs",
+      "config": {
+        "customers": [
+          "LEGO A/S",
+          "Novo Nordisk A/S",
+          "Carlsberg A/S",
+          "Vestas Wind Systems A/S",
+          "A.P. Moller - Maersk A/S"
+        ],
+        "patterns": [
+          {
+            "label": "SHIPMENT",
+            "regex": "\\bSHP\\d{8}\\b"
+          }
+        ]
+      },
+      "document": "CUSTOMER = \"Vestas Wind Systems A/S\"\ndef priority(shipment_id: str) -> int:\n    return 1 if shipment_id in (\"SHP30000001\", \"SHP30000002\") else 3\n",
+      "expect": {
+        "Vestas Wind Systems A/S": [
+          "vestas"
+        ]
+      }
+    },
+    {
+      "id": "shipments",
+      "title": "Shipment list with city and goods left in",
+      "config": {
+        "customers": [
+          "LEGO A/S",
+          "Novo Nordisk A/S",
+          "Carlsberg A/S",
+          "Vestas Wind Systems A/S",
+          "A.P. Moller - Maersk A/S"
+        ],
+        "patterns": [
+          {
+            "label": "SHIPMENT",
+            "regex": "\\bSHP\\d{8}\\b"
+          }
+        ]
+      },
+      "document": "customer,origin_city,commodity,weight_kg,shipment\nLEGO A/S,Billund,plastic toy bricks,18400,SHP20000001\nNovo Nordisk A/S,Bagsvaerd,insulin pens (temperature controlled 2-8C),3200,SHP20000002\nCarlsberg A/S,Fredericia,beer kegs and bottled lager,22000,SHP20000003\nVestas Wind Systems A/S,Lem,wind turbine blades (oversize),61000,SHP20000004\nA.P. Moller - Maersk A/S,Copenhagen,empty 40ft containers for repositioning,30480,SHP20000005\n",
+      "expect": {
+        "LEGO A/S": [
+          "lego"
+        ],
+        "Novo Nordisk A/S": [
+          "novo"
+        ],
+        "Carlsberg A/S": [
+          "carlsberg"
+        ],
+        "Vestas Wind Systems A/S": [
+          "vestas"
+        ],
+        "A.P. Moller - Maersk A/S": [
+          "maersk",
+          "moller",
+          "møller"
+        ]
+      }
+    },
+    {
+      "id": "email",
+      "title": "Email with signature, names only in the list",
+      "config": {
+        "customers": [
+          "LEGO A/S",
+          "Novo Nordisk A/S",
+          "Carlsberg A/S",
+          "Vestas Wind Systems A/S",
+          "A.P. Moller - Maersk A/S"
+        ],
+        "patterns": [
+          {
+            "label": "SHIPMENT",
+            "regex": "\\bSHP\\d{8}\\b"
+          }
+        ]
+      },
+      "document": "Subject: Q4 capacity for the Billund campus\n\nHi team,\n\nLEGO A/S needs extra capacity in November for the holiday season, mainly LEGO Technic and DUPLO sets\ngoing from Billund to the distribution centre in Jiaxing. Please confirm by Friday.\n\nBest regards,\nLogistics Coordinator, LEGO A/S\nAastvej 1, 7190 Billund, Denmark\nwww.lego.com | legogroup.com/careers\n",
+      "expect": {
+        "LEGO A/S": [
+          "lego"
+        ]
+      }
+    },
+    {
+      "id": "email-aliases",
+      "title": "Same email, with brands, address and town as aliases",
+      "config": {
+        "customers": [
+          {
+            "name": "LEGO A/S",
+            "aliases": [
+              "Technic",
+              "DUPLO",
+              "Aastvej 1",
+              "7190 Billund",
+              "Billund"
+            ]
+          },
+          "Novo Nordisk A/S",
+          "Carlsberg A/S",
+          "Vestas Wind Systems A/S",
+          "A.P. Moller - Maersk A/S"
+        ],
+        "patterns": [
+          {
+            "label": "SHIPMENT",
+            "regex": "\\bSHP\\d{8}\\b"
+          }
+        ]
+      },
+      "document": "Subject: Q4 capacity for the Billund campus\n\nHi team,\n\nLEGO A/S needs extra capacity in November for the holiday season, mainly LEGO Technic and DUPLO sets\ngoing from Billund to the distribution centre in Jiaxing. Please confirm by Friday.\n\nBest regards,\nLogistics Coordinator, LEGO A/S\nAastvej 1, 7190 Billund, Denmark\nwww.lego.com | legogroup.com/careers\n",
+      "expect": {
+        "LEGO A/S": [
+          "lego"
+        ]
+      }
+    },
+    {
+      "id": "hint",
+      "title": "A customer with an identifying hint",
+      "config": {
+        "customers": [
+          {
+            "name": "LEGO A/S",
+            "hint": "Danish toy manufacturer famous for interlocking plastic bricks"
+          }
+        ]
+      },
+      "document": "Please book 2 trucks for LEGO A/S next week.\n",
+      "expect": {
+        "LEGO A/S": [
+          "lego"
+        ]
+      }
+    },
+    {
+      "id": "hint-vague",
+      "title": "A customer with a vague hint",
+      "config": {
+        "customers": [
+          {
+            "name": "LEGO A/S",
+            "hint": "Danish manufacturer, consumer goods"
+          }
+        ]
+      },
+      "document": "Please book 2 trucks for LEGO A/S next week.\n",
+      "expect": {
+        "LEGO A/S": [
+          "lego"
+        ]
+      }
+    }
+  ]
+}
