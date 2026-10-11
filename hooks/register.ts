@@ -61,13 +61,15 @@ let sessionFile: string | undefined
 /** This session's transcript, once known. */
 let transcriptPath: string | undefined
 /** Set when masking failed: from then on no request leaves this session. */
-let blocked: string | undefined
+const blocks = new Map<'load' | 'version' | 'config' | 'vault', string>()
+/** Why this session is blocked, if it is: the first reason recorded. */
+const blocked = (): string | undefined => blocks.values().next().value
 let loading: Promise<void> | undefined
 
 /** Loads config and vault once; never rejects. A failure blocks the session instead. */
 function ready($: EngineInterface): Promise<void> {
   loading ??= load($).catch(err => {
-    blocked = `loading the customer-mask config failed (${String(err)}).`
+    blocks.set('load', `loading the customer-mask config failed (${String(err)}).`)
   })
   return loading
 }
@@ -75,9 +77,44 @@ function ready($: EngineInterface): Promise<void> {
 async function load($: EngineInterface): Promise<void> {
   const { version } = await $.session.version()
   if (compareVersions(version, MIN_CLAUDE_CODE) < 0) {
-    blocked = `Claude Code ${version} is older than ${MIN_CLAUDE_CODE}, the oldest version customer-mask is tested on. Run \`claude update\`.`
+    blocks.set('version', `Claude Code ${version} is older than ${MIN_CLAUDE_CODE}, the oldest version customer-mask is tested on. Run \`claude update\`.`)
   }
 
+  try {
+    applyConfig(await readConfig($))
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    blocks.set('config', `${reason} Fix it, then run /customer-mask reload.`)
+  }
+
+  // The marker is chosen once per session and kept in $.state, so a hot
+  // reload keeps the same placeholders. A session whose vault predates
+  // markers keeps the legacy form, so its placeholders still resolve.
+  const entries = await read($, vaultAtom)
+  const saved = await read($, markerAtom)
+  const marker = saved ?? (entries.length > 0 ? '' : newMarker())
+  if (saved === null) await update($, markerAtom, () => marker)
+  vault = new Vault(marker)
+  vault.load(entries, rules)
+  await reserveFromTranscript($)
+
+}
+
+/** A config read from the files, ready to apply. */
+type LoadedConfig = {
+  rules: ReturnType<typeof buildRules>
+  maskedList: readonly string[]
+  unmaskedList: readonly string[]
+  dropMedia: boolean
+  summary: string
+}
+
+/**
+ * Reads and merges the config files (CUSTOMER_MASK_CONFIG, then the user's,
+ * then the project's). Throws with a readable reason when a file is not valid
+ * JSON, a pattern does not compile, or an option has a wrong value.
+ */
+async function readConfig($: EngineInterface): Promise<LoadedConfig> {
   const customers: NonNullable<MaskConfig['customers']> = []
   const patterns: NonNullable<MaskConfig['patterns']> = []
   let detectors: MaskConfig['detectors'] = {}
@@ -112,41 +149,64 @@ async function load($: EngineInterface): Promise<void> {
       if (part.nameVariants !== undefined) nameVariants = part.nameVariants
       sources.push(path)
     } catch (err) {
-      blocked = `${path} is not valid JSON (${String(err)}). Fix it, then restart the session.`
+      throw new Error(`${path} is not valid JSON (${String(err)}).`)
     }
   }
 
+  let built: ReturnType<typeof buildRules>
   try {
-    rules = buildRules({ customers, patterns, detectors, nameVariants })
+    built = buildRules({ customers, patterns, detectors, nameVariants })
   } catch (err) {
-    blocked = `a pattern in the customer-mask config does not compile (${String(err)}).`
+    throw new Error(`a pattern in the customer-mask config does not compile (${String(err)}).`)
   }
-
-  maskedList = toolList ?? DEFAULT_MASKED_TOOLS
-  unmaskedList = exceptions
-  keepsPlaceholders = toolPolicy(maskedList, unmaskedList)
   if (media !== undefined && media !== 'drop' && media !== 'allow') {
-    blocked = `media must be "drop" or "allow", not ${JSON.stringify(media)}.`
+    throw new Error(`media must be "drop" or "allow", not ${JSON.stringify(media)}.`)
   }
-  dropMedia = media !== 'allow'
-  // The marker is chosen once per session and kept in $.state, so a hot
-  // reload keeps the same placeholders. A session whose vault predates
-  // markers keeps the legacy form, so its placeholders still resolve.
-  const entries = await read($, vaultAtom)
-  const saved = await read($, markerAtom)
-  const marker = saved ?? (entries.length > 0 ? '' : newMarker())
-  if (saved === null) await update($, markerAtom, () => marker)
-  vault = new Vault(marker)
-  vault.load(entries, rules)
-  await reserveFromTranscript($)
+  const masked = toolList ?? DEFAULT_MASKED_TOOLS
+  const isDropping = media !== 'allow'
+  return {
+    rules: built,
+    maskedList: masked,
+    unmaskedList: exceptions,
+    dropMedia: isDropping,
+    summary:
+      `${customers.length} customer name(s) (${customers.filter(c => typeof c !== 'string' && c.hint).length} with a hint), ` +
+      `${patterns.length} custom pattern(s), ` +
+      `tools kept masked: ${masked.join(', ') || 'none'}` +
+      (exceptions.length ? ` except ${exceptions.join(', ')}` : '') +
+      `, images/PDFs: ${isDropping ? 'dropped' : 'sent unmasked'}` +
+      (sources.length ? ` from ${sources.join(', ')}` : ' (no config file found; built-in detectors only)'),
+  }
+}
 
-  configSummary =
-    `${customers.length} customer name(s) (${customers.filter(c => typeof c !== 'string' && c.hint).length} with a hint), ` +
-    `${patterns.length} custom pattern(s), ` +
-    `tools kept masked: ${maskedList.join(', ') || 'none'}` +
-    (unmaskedList.length ? ` except ${unmaskedList.join(', ')}` : '') +
-    `, images/PDFs: ${dropMedia ? 'dropped' : 'sent unmasked'}` +
-    (sources.length ? ` from ${sources.join(', ')}` : ' (no config file found; built-in detectors only)')
+function applyConfig(c: LoadedConfig): void {
+  rules = c.rules
+  maskedList = c.maskedList
+  unmaskedList = c.unmaskedList
+  keepsPlaceholders = toolPolicy(maskedList, unmaskedList)
+  dropMedia = c.dropMedia
+  configSummary = c.summary
+}
+
+/**
+ * Reads the config files again. A broken config is not applied: the working
+ * one stays in force and the reason is returned. A good one replaces it, lifts
+ * a block a bad config caused, and re-renders the context Claude got masked.
+ */
+async function reloadConfig($: EngineInterface): Promise<string> {
+  let next: LoadedConfig
+  try {
+    next = await readConfig($)
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    return `Not reloaded, the current config stays in force: ${reason}`
+  }
+  applyConfig(next)
+  blocks.delete('config')
+  await $.ui.invalidate('prompt.context')
+  await $.ui.invalidate('prompt.section')
+  $.ui.status(blocked() ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
+  return `Reloaded. Config: ${configSummary}`
 }
 
 /**
@@ -207,7 +267,7 @@ async function attach($: EngineInterface, path: string, source: string): Promise
     try {
       saved = parseVaultFile(await $.fs.read(file))
     } catch (err) {
-      blocked = `the vault file ${file} cannot be read (${String(err)}). Move it away and restart the session.`
+      blocks.set('vault', `the vault file ${file} cannot be read (${String(err)}). Move it away and restart the session.`)
       return
     }
     // Placeholders minted before the file was found (none, normally) are
@@ -338,8 +398,9 @@ export const register: Register = on => {
   on('turn.step', async function* ($, e, next) {
     await ready($)
 
-    if (blocked !== undefined) {
-      const text = `${NAME} stopped this request so customer data could not leak: ${blocked}`
+    const reason = blocked()
+    if (reason !== undefined) {
+      const text = `${NAME} stopped this request so customer data could not leak: ${reason}`
       yield { kind: 'text', index: 0, text }
       return { turnId: e.turnId, index: e.index, answer: text, toolUses: [], stopReason: 'end_turn', usage: null }
     }
@@ -437,18 +498,22 @@ export const register: Register = on => {
     await reserveFromTranscript($)
     await $.command.register({
       name: 'customer-mask',
-      description: 'Show what customer-mask detects and which values it has replaced this session.',
+      description: 'Show what customer-mask detects and has replaced; "reload" re-reads the config.',
+      argumentHint: '[reload]',
     })
-    $.ui.status(blocked ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
+    $.ui.status(blocked() ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
     return next(e)
   })
 
-  on('command.run', { command: 'customer-mask' }, async $ => {
+  on('command.run', { command: 'customer-mask' }, async ($, e) => {
     await ready($)
+    const arg = e.args.trim()
+    if (arg === 'reload') return { text: await reloadConfig($) }
+    if (arg !== '') return { text: `Unknown option "${arg}". Use /customer-mask to see the status, or /customer-mask reload.` }
     const rows = vault.entries().map(v => `  ${vault.format(v.token)}  →  ${v.value}`)
     return {
       text: [
-        `${NAME}: ${blocked ? `BLOCKED — ${blocked}` : 'active'}`,
+        `${NAME}: ${blocked() ? `BLOCKED — ${blocked()}` : 'active'}`,
         `Config: ${configSummary}`,
         `Images/PDFs removed this session: ${mediaDropped}`,
         `Rows removed because masking failed: ${rowsRemoved}`,

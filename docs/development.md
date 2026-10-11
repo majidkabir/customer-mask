@@ -67,7 +67,7 @@ When writing tests, build placeholder strings at run time (`` `<<${label}_${n}>>
 
 ## What has been verified
 
-Besides the automated tests (61, including `tests/scale.test.ts`, which fails if masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model with Claude Code 2.1.296.
+Besides the automated tests (73, including `tests/scale.test.ts`, which fails if masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model with Claude Code 2.1.296.
 
 | Check | Result |
 | --- | --- |

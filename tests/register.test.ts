@@ -243,6 +243,42 @@ describe('customer hints in a session', () => {
   })
 })
 
+const reload = ($: Engine) => $.command.run({ command: 'customer-mask', args: 'reload' } as never)
+
+describe('/customer-mask reload', () => {
+  test('a customer added to the config is masked after a reload', async ($, on) => {
+    const files: Record<string, string> = { '/proj/.claude/customer-mask.json': CONFIG }
+    world(on, { files })
+    expect(JSON.stringify((await appendPrompt($, 'Zephyr Cargo ApS', 'r1')).message?.content)).toContain('Zephyr')
+
+    files['/proj/.claude/customer-mask.json'] = JSON.stringify({ customers: ['Acme Freight A/S', 'Zephyr Cargo ApS'] })
+    const answer = await reload($)
+    expect(JSON.stringify(answer)).toContain('Reloaded')
+    expect(JSON.stringify((await appendPrompt($, 'Zephyr Cargo ApS', 'r2')).message?.content)).not.toContain('Zephyr')
+  })
+
+  test('a broken config is not applied; the working one stays in force', async ($, on) => {
+    const files: Record<string, string> = { '/proj/.claude/customer-mask.json': CONFIG }
+    world(on, { files })
+    await appendPrompt($, 'warm up', 'r3')
+    files['/proj/.claude/customer-mask.json'] = '{ broken'
+    expect(JSON.stringify(await reload($))).toContain('Not reloaded')
+    expect(JSON.stringify((await appendPrompt($, 'Acme Freight A/S', 'r4')).message?.content)).not.toContain('Acme')
+  })
+
+  test('fixing a broken config and reloading lifts the block', async ($, on) => {
+    const files: Record<string, string> = { '/proj/.claude/customer-mask.json': '{ broken' }
+    world(on, { files })
+    const status = async () => JSON.stringify(await $.command.run({ command: 'customer-mask', args: '' } as never))
+    expect(await status()).toContain('BLOCKED')
+
+    files['/proj/.claude/customer-mask.json'] = CONFIG
+    expect(JSON.stringify(await reload($))).toContain('Reloaded')
+    // (The test kit answers one model request per test, so the lifted block is read from the status.)
+    expect(await status()).toContain('customer-mask: active')
+  })
+})
+
 describe('Claude Code version', () => {
   test('an older Claude Code blocks every request', async ($, on) => {
     const seen = world(on, { version: '2.1.290' })

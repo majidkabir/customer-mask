@@ -12,7 +12,7 @@ customer-mask reads up to three JSON files and **merges** them:
 
 `customers` and `patterns` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools` is taken from the last file that sets it, and `unmaskedTools` from all files combined.
 
-Config is read once, when the mod loads. After editing it, start a new session. `/clear` does not reload it.
+Config is read when the session starts. After editing it, run `/customer-mask reload` to apply it to the running session. A config that doesn't load (bad JSON, a pattern that doesn't compile, a wrong option) is **not** applied on reload: the working one stays in force and the command says why. At session start, a broken config blocks the session until it's fixed and reloaded.
 
 With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 

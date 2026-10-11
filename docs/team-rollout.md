@@ -61,7 +61,7 @@ Run it on a schedule (daily is usually enough) and distribute the output with MD
 15 6 * * *  /usr/bin/node /opt/claude-plugins/customer-mask/tools/build-customer-list.mjs --csv /srv/exports/accounts.csv --column "Account Name" --out /srv/dist/customers.json
 ```
 
-Sessions read the list when they start, so a new customer is masked from the next session on. Users can still add their own project-specific names in `.claude/customer-mask.json`; both lists are combined.
+Sessions read the list when they start, so a new customer is masked from the next session on; a running session picks it up with `/customer-mask reload`. Users can still add their own project-specific names in `.claude/customer-mask.json`; both lists are combined.
 
 ## 3. Deploy managed settings
 

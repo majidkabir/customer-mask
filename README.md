@@ -72,7 +72,7 @@ Emails, phone numbers, IBANs and Danish CPR numbers are detected without any con
 /customer-mask
 ```
 
-It shows the config it loaded and every value it has replaced so far. The status line shows `🔒 customer-mask on`.
+It shows the config it loaded and every value it has replaced so far. The status line shows `🔒 customer-mask on`. After editing the config, `/customer-mask reload` applies it without restarting.
 
 ## What is covered
 
@@ -104,7 +104,7 @@ If anything goes wrong, the mod fails closed. A broken config or an old Claude C
 
 ## Status
 
-Version 0.3, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.4, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
 
 ## License
 
