@@ -13,7 +13,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ✅ Fixed in 0.2 |
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
 | 9 | [Is pseudonymisation enough for compliance?](#9-is-pseudonymisation-enough-for-compliance) | Compliance | ❓ Needs legal / DPO |
-| 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ❓ Decision needed |
+| 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ✅ Kit in 0.4; `--safe-mode` gap remains |
 | 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ✅ Hints added in 0.4 |
 | 12 | [Thinking blocks](#12-thinking-blocks) | Coverage | ℹ️ By design |
 | 13 | [Performance on large tool results](#13-performance-on-large-tool-results) | Engineering | ✅ Fixed in 0.2 |
@@ -112,13 +112,9 @@ Placeholders are **pseudonymisation**, not anonymisation. Context can still re-i
 
 ### 10. Enforcing it for a team
 
-A mod the user installs can be disabled by the user. For a team rollout, Claude Code's managed settings can:
+**Fixed (0.4):** [docs/team-rollout.md](team-rollout.md) is a tested kit: copy the mod to each machine with MDM, build one customer list from a CRM export with `tools/build-customer-list.mjs`, and deploy [`rollout/managed-settings.json`](../rollout/managed-settings.json) (or the [strict variant](../rollout/managed-settings.strict.json), which also stops users' own mods and `--plugin-dir`). Verified with real managed settings: the mod loads first for everyone (`tier prepend`) and uses the central list.
 
-- load it first and for everyone (`prependPlugins`)
-- stop other user mods from loading (`allowManagedModsOnly`)
-- block `--plugin-dir` side-loading (`disableSideloadFlags`)
-
-**Decision:** who owns the managed config, and how is the customer list distributed (see #5)?
+**Still open:** `claude --safe-mode` and `claude --bare` start without any plugins, and in Claude Code 2.1.296 no managed setting blocks them. Cover this with policy, or a network-level control. Who owns the managed config and the CRM export job is an organizational decision.
 
 ### 11. Effect on answer quality
 

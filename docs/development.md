@@ -20,7 +20,11 @@ customer-mask/
 ├── docs/
 ├── tools/
 │   ├── unmask.mjs           # restores real values in claude -p output, from the saved table
-│   └── clean-transcripts.mjs # masks Claude Code's local copies in transcripts (large or older ones)
+│   ├── clean-transcripts.mjs # masks Claude Code's local copies in transcripts (large or older ones)
+│   └── build-customer-list.mjs # builds the customer list from a CRM export (CSV)
+├── rollout/
+│   ├── managed-settings.json        # team rollout: enable for everyone, load first
+│   └── managed-settings.strict.json # same, plus only your organization's mods
 ├── customer-mask.example.json
 └── .github/workflows/test.yml
 ```

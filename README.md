@@ -98,6 +98,7 @@ If anything goes wrong, the mod fails closed. A broken config or an old Claude C
 
 - **[How it works](docs/how-it-works.md)**: diagrams of every data path, the placeholder vault, streaming, and fail-closed behaviour
 - **[Configuration](docs/configuration.md)**: all options, examples, keeping the customer list up to date
+- **[Team rollout](docs/team-rollout.md)**: run it for everyone with managed settings and one central customer list built from a CRM export
 - **[Development](docs/development.md)**: repo layout, tests, debugging, what has been verified
 - **[Open questions](docs/open-questions.md)**: known gaps and decisions still to make
 

@@ -1,0 +1,14 @@
+{
+  "extraKnownMarketplaces": {
+    "customer-mask": {
+      "source": { "source": "directory", "path": "/opt/claude-plugins/customer-mask" }
+    }
+  },
+  "enabledPlugins": { "customer-mask@customer-mask": true },
+  "prependPlugins": ["customer-mask@customer-mask", "sec-default@builtin"],
+  "env": { "CUSTOMER_MASK_CONFIG": "/opt/claude-plugins/customers.json" },
+  "pluginConfigs": {
+    "cc-plugin-sec-default@builtin": { "options": { "allowManagedModsOnly": true } }
+  },
+  "disableSideloadFlags": true
+}
