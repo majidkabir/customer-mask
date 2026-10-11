@@ -1,0 +1,26 @@
+{
+  "customers": [
+    "Acme Freight A/S",
+    "Nordic Widgets ApS"
+  ],
+  "patterns": [
+    {
+      "label": "SHIPMENT",
+      "regex": "\\bSHP\\d{8}\\b"
+    },
+    {
+      "label": "CUSTOMER_NO",
+      "regex": "\\bC\\d{7}\\b"
+    }
+  ],
+  "detectors": {
+    "email": true,
+    "phone": true,
+    "iban": true,
+    "cpr": true
+  },
+  "maskedTools": [
+    "WebSearch",
+    "WebFetch"
+  ]
+}

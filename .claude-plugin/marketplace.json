@@ -1,0 +1,13 @@
+{
+  "name": "customer-mask",
+  "owner": {
+    "name": "Majid"
+  },
+  "plugins": [
+    {
+      "name": "customer-mask",
+      "source": "./"
+    }
+  ],
+  "description": "Claude Code mod that masks customer data before it reaches the model"
+}

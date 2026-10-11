@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Mods need Claude Code 2.1.287 or newer. `plugin validate` and
+      # `plugin test` run offline and need no sign-in.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Validate manifest, marketplace and hooks module
+        run: claude plugin validate .
+
+      - name: Run tests
+        run: claude plugin test .
