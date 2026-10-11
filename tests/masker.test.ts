@@ -2,8 +2,10 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   buildRules,
+  cleanTranscript,
   compareVersions,
   DEFAULT_MASKED_TOOLS,
+  hideKnownValues,
   mask,
   newMarker,
   parseVaultFile,
@@ -271,5 +273,48 @@ describe('vault file', () => {
     expect(() => parseVaultFile('{"version":2,"marker":"x","entries":[]}')).toThrow()
     expect(() => parseVaultFile('{"version":1,"marker":"x","entries":[{"token":1}]}')).toThrow()
     expect(() => parseVaultFile('nope')).toThrow()
+  })
+})
+
+describe('cleaning the transcript', () => {
+  const vaultWith = () => {
+    const v = new Vault('k3f9')
+    mask('Acme Freight A/S SHP12345678', buildRules(config), v)
+    return v
+  }
+
+  test('hideKnownValues replaces known values as whole words only', () => {
+    const v = vaultWith()
+    expect(hideKnownValues('Acme Freight A/S, SHP12345678; xSHP12345678', v)).toBe(
+      `${ph('CUSTOMER', 1, 'k3f9')}, ${ph('SHIPMENT', 1, 'k3f9')}; xSHP12345678`,
+    )
+  })
+
+  test('masks queue records and tool results; leaves paths, other lines and placeholders alone', () => {
+    const v = vaultWith()
+    const lines = [
+      JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: 'Why is SHP12345678 late?' }),
+      JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'tool_result', content: ph('CUSTOMER', 1, 'k3f9') }] },
+        toolUseResult: { type: 'text', file: { filePath: '/p/Acme Freight A/S/x.csv', content: 'Acme Freight A/S,1' } },
+      }),
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}',
+      '',
+    ]
+    const { text, changedLines } = cleanTranscript(lines.join('\n'), v)
+    const out = text.split('\n')
+    expect(changedLines).toBe(2)
+    expect(JSON.parse(out[0] ?? '').content).toBe(`Why is ${ph('SHIPMENT', 1, 'k3f9')} late?`)
+    const tool = JSON.parse(out[1] ?? '').toolUseResult
+    expect(tool.file.content).toBe(`${ph('CUSTOMER', 1, 'k3f9')},1`)
+    expect(tool.file.filePath).toBe('/p/Acme Freight A/S/x.csv')
+    expect(out[2]).toBe(lines[2])
+    expect(out[3]).toBe('')
+  })
+
+  test('an empty vault changes nothing', () => {
+    const line = JSON.stringify({ type: 'queue-operation', content: 'Acme Freight A/S' })
+    expect(cleanTranscript(line, new Vault('k3f9'))).toEqual({ text: line, changedLines: 0 })
   })
 })

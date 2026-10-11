@@ -113,6 +113,7 @@ All hooks are in [`hooks/register.ts`](../hooks/register.ts). The masking logic 
 | `classic.UserPromptSubmit` | mask | Sets the session title from the masked prompt, so the stored title holds no customer data. |
 | `turn.step` | unmask | Streams the model's response. Text and thinking chunks are unmasked on the fly for display. |
 | `tool.call` | unmask | Restores real values in tool arguments before the permission prompt and the tool see them. `WebSearch`, `WebFetch` and every MCP tool keep their placeholders (configurable with `maskedTools` / `unmaskedTools`). Fails closed with a `.catch` that denies the call. |
+| `session.end` | mask | When the session ends, masks the local copies Claude Code wrote into the transcript without passing them through the mod (prompt queue records, tool results' structured records), using the saved placeholder table. |
 | `session.start` | – | Loads config, reserves placeholder numbers already in a resumed transcript, registers `/customer-mask`, sets the status line. |
 | `command.run` | – | Answers `/customer-mask` with the config summary and the placeholder table. |
 

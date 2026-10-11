@@ -6,7 +6,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | --- | --- | --- | --- |
 | 1 | [Headless session title is generated from the raw prompt](#1-headless-session-title-is-generated-from-the-raw-prompt) | Leak | ⚠️ Verified gap, partly mitigated |
 | 2 | [Headless final result text stays masked](#2-headless-final-result-text-stays-masked) | UX | ✅ Fixed in 0.3 (`tools/unmask.mjs`) |
-| 3 | [Raw prompt in the local transcript's queue record](#3-raw-prompt-in-the-local-transcripts-queue-record) | Local storage | ⚠️ Verified gap |
+| 3 | [Raw prompt in the local transcript's queue record](#3-raw-prompt-in-the-local-transcripts-queue-record) | Local storage | ✅ Fixed in 0.4 |
 | 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ✅ Fixed in 0.3 (beside the session) |
 | 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | 🟡 Variants fixed in 0.2; NER open |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
@@ -51,9 +51,11 @@ Verified live. A mod still can't change what `claude -p` prints by itself, so th
 
 ### 3. Raw prompt in the local transcript's queue record
 
-The transcript file holds one `queue-operation` record with the raw first prompt. It is written by Claude Code's input queue and doesn't pass through `session.append`. This copy is **local only** (`~/.claude/projects/…`) and is not sent to the model, but it means the on-disk transcript is not fully clean.
+**Was:** Claude Code keeps two kinds of local-only copies in the transcript that don't pass through `session.append`: the `queue-operation` record of each typed prompt, and the structured record of each tool result (`toolUseResult`, e.g. a file's full content as Claude read it). Neither is sent to the model, but the transcript on disk wasn't fully clean.
 
-**Options:** accept it (the data was already on this machine), or clean it up with a `SessionEnd` hook that rewrites the transcript file.
+**Fixed (0.4):** when a session ends (or `/clear` ends a conversation), the mod replaces every value in the saved placeholder table with its placeholder in exactly those fields, plus generated titles and summaries. File paths are left alone, so resume and edit tracking keep working. The file is read again just before writing, and the write is skipped if anything changed in between. Verified live: after a session that read a CSV, no transcript line held a real value, and resuming it still worked.
+
+A mod can only read files up to 4 MiB. For larger transcripts, and for sessions from before 0.4, run `node tools/clean-transcripts.mjs` (`--dry-run` to preview, `--session <id>` for one). It needs Node 22.18+.
 
 ### 4. Vault persistence across restarts
 

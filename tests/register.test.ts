@@ -48,6 +48,7 @@ function world(on: On, w: World = {}) {
     return { value: undefined }
   })
   on('classic.SessionStart', () => ({}))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('turn.step', async function* () {
     seen.requestSent = true
     const reply = typeof w.reply === 'function' ? w.reply() : (w.reply ?? [])
@@ -201,6 +202,26 @@ describe('early in a headless start', () => {
     await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
     await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
     expect(seen.requestSent).toBe(true)
+  })
+})
+
+describe('cleaning the transcript at session end', () => {
+  test('the prompt queue record and tool records are masked when the session ends', async ($, on) => {
+    const transcript = [
+      JSON.stringify({ type: 'queue-operation', content: 'Ping Acme Freight A/S' }),
+      JSON.stringify({ type: 'user', toolUseResult: { stdout: 'Acme Freight A/S ok', cwd: '/proj' } }),
+    ].join('\n')
+    const seen = world(on, { files: { '/proj/.claude/customer-mask.json': CONFIG, [TRANSCRIPT]: transcript } })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Ping Acme Freight A/S')).message?.content))
+
+    await $.session.end({ reason: 'prompt_input_exit', sessionId: 's1', resume: { id: 's1' } } as never)
+
+    const cleaned = seen.writes[TRANSCRIPT] ?? ''
+    expect(cleaned).not.toContain('Acme')
+    expect(cleaned).toContain(`Ping ${ph('CUSTOMER', 1, m)}`)
+    expect(cleaned).toContain(`${ph('CUSTOMER', 1, m)} ok`)
+    expect(cleaned).toContain('"cwd":"/proj"')
   })
 })
 

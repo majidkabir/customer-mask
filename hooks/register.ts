@@ -4,6 +4,7 @@ import type { EngineInterface, Register, TurnStepChunk } from 'claude-code'
 import type { VaultEntry } from '../types'
 import {
   buildRules,
+  cleanTranscript,
   DEFAULT_MASKED_TOOLS,
   mask,
   StreamUnmasker,
@@ -57,6 +58,8 @@ let mediaDropped = 0
 let rowsRemoved = 0
 /** The vault file beside this session's transcript, once the session's transcript is known. */
 let sessionFile: string | undefined
+/** This session's transcript, once known. */
+let transcriptPath: string | undefined
 /** Set when masking failed: from then on no request leaves this session. */
 let blocked: string | undefined
 let loading: Promise<void> | undefined
@@ -190,10 +193,11 @@ async function freshVault($: EngineInterface): Promise<void> {
  * placeholders the transcript holds resolve again. /clear starts a new
  * conversation and a new vault. Anything new is written to the file.
  */
-async function attach($: EngineInterface, transcriptPath: string, source: string): Promise<void> {
-  const file = vaultFileFor(transcriptPath)
+async function attach($: EngineInterface, path: string, source: string): Promise<void> {
+  const file = vaultFileFor(path)
   if (file === sessionFile) return
   sessionFile = file
+  transcriptPath = path
 
   if (source === 'clear') {
     await freshVault($)
@@ -277,6 +281,27 @@ function redactContent(content: readonly Block[]): Block[] {
     .map(b =>
       b.type === 'text' ? { ...b, text: UNCHECKED_NOTE } : b.type === 'tool_result' ? { ...b, content: UNCHECKED_NOTE } : b,
     )
+}
+
+/**
+ * Masks the copies Claude Code keeps in the transcript without passing them
+ * through the mod (prompt queue records, tool results' structured records),
+ * using the values the vault knows. Reads the file again before writing and
+ * gives up rather than overwrite something written in between. A transcript
+ * over 4 MiB cannot be read from a mod: tools/clean-transcripts.mjs does those.
+ */
+async function cleanSessionTranscript($: EngineInterface): Promise<void> {
+  if (transcriptPath === undefined || vault.size === 0) return
+  let original: string
+  try {
+    original = await $.fs.read(transcriptPath)
+  } catch {
+    return
+  }
+  const { text, changedLines } = cleanTranscript(original, vault)
+  if (changedLines === 0) return
+  if ((await $.fs.read(transcriptPath)) !== original) return
+  await $.fs.write(transcriptPath, text)
 }
 
 export const register: Register = on => {
@@ -391,6 +416,17 @@ export const register: Register = on => {
   on('classic.SessionStart', async ($, e, next) => {
     await ready($)
     if (e.agent_id === undefined) await attach($, e.transcript_path, e.source)
+    return next(e)
+  })
+
+  // When the session ends (or /clear ends a conversation), mask the local
+  // copies Claude Code wrote beside the masked rows.
+  on('session.end', async ($, e, next) => {
+    try {
+      await cleanSessionTranscript($)
+    } catch {
+      // Best effort: the rows the model reads are masked either way.
+    }
     return next(e)
   })
 

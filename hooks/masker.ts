@@ -46,6 +46,71 @@ export function compareVersions(a: string, b: string): number {
   return 0
 }
 
+/**
+ * Replaces every value the vault knows with its placeholder, wherever it
+ * appears as a whole word. Used on copies Claude Code writes without passing
+ * them through the mod (see `cleanTranscript`).
+ */
+export function hideKnownValues(text: string, vault: Vault): string {
+  const pairs = vault
+    .entries()
+    .filter(e => e.value.trim().length > 1)
+    .sort((a, b) => b.value.length - a.value.length)
+  if (pairs.length === 0) return text
+  const byValue = new Map(pairs.map(e => [e.value, e.token]))
+  const alternation = [...byValue.keys()].map(v => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const regex = new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternation})(?![\\p{L}\\p{N}])`, 'gu')
+  return outsidePlaceholders(text, plain =>
+    plain.replace(regex, value => vault.format(byValue.get(value) ?? value)),
+  )
+}
+
+/** Keys in a tool's structured record that name a file or folder rather than hold content. */
+const PATH_KEY = /path|cwd|dir/i
+
+/** The top-level text fields of transcript records Claude Code writes without the mod seeing them. */
+const RAW_TEXT_FIELDS = ['aiTitle', 'lastPrompt', 'summary']
+
+/**
+ * Masks the copies Claude Code keeps in a session's transcript outside the
+ * rows the mod already masked: the queue record of each typed prompt, the
+ * structured record of each tool result (`toolUseResult`), and generated
+ * titles or summaries. Paths are left alone so resume and edit tracking work.
+ * Lines that need no change are kept byte for byte.
+ */
+export function cleanTranscript(text: string, vault: Vault): { text: string; changedLines: number } {
+  let changedLines = 0
+  const hide = (v: string) => hideKnownValues(v, vault)
+  const hideDeep = (v: unknown, key = ''): unknown => {
+    if (typeof v === 'string') return PATH_KEY.test(key) ? v : hide(v)
+    if (Array.isArray(v)) return v.map(x => hideDeep(x, key))
+    if (v !== null && typeof v === 'object') {
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, hideDeep(x, k)]))
+    }
+    return v
+  }
+  const lines = text.split('\n').map(line => {
+    if (!line.trim()) return line
+    let record: Record<string, unknown>
+    try {
+      record = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return line
+    }
+    const out: Record<string, unknown> = { ...record }
+    if (record.type === 'queue-operation' && typeof record.content === 'string') out.content = hide(record.content)
+    for (const field of RAW_TEXT_FIELDS) {
+      if (typeof record[field] === 'string') out[field] = hide(record[field] as string)
+    }
+    if ('toolUseResult' in record) out.toolUseResult = hideDeep(record.toolUseResult)
+    const next = JSON.stringify(out)
+    if (next === JSON.stringify(record)) return line
+    changedLines += 1
+    return next
+  })
+  return { text: lines.join('\n'), changedLines }
+}
+
 /** The vault file beside a session's transcript: `<session-id>.customer-mask.json`. */
 export function vaultFileFor(transcriptPath: string): string {
   return `${transcriptPath.replace(/\.jsonl$/, '')}.customer-mask.json`
