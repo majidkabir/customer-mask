@@ -4,6 +4,7 @@ import {
   buildRules,
   DEFAULT_MASKED_TOOLS,
   mask,
+  newMarker,
   StreamUnmasker,
   toolPolicy,
   unmask,
@@ -12,7 +13,8 @@ import {
 } from '../hooks/masker'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
-const ph = (label: string, n: number) => `<<${label}_${n}>>`
+const ph = (label: string, n: number, marker = '') =>
+  marker ? `<<${label}_${n}.${marker}>>` : `<<${label}_${n}>>`
 
 const config = {
   customers: ['Acme Freight A/S', 'Nordic Widgets'],
@@ -138,5 +140,39 @@ describe('toolPolicy', () => {
     expect(keeps('mcp__a.b__x')).toBe(true)
     expect(keeps('mcp__aXb__x')).toBe(false)
     expect(keeps('xmcp__a.b__x')).toBe(false)
+  })
+})
+
+describe('per-session marker', () => {
+  test('newMarker is four lowercase letters or digits, and varies', () => {
+    const seen = new Set(Array.from({ length: 20 }, () => newMarker()))
+    for (const m of seen) expect(m).toMatch(/^[a-z0-9]{4}$/)
+    expect(seen.size).toBeGreaterThan(1)
+  })
+
+  test('a marked vault writes and restores its own form only', () => {
+    const vault = new Vault('k3f9')
+    const masked = mask('Nordic Widgets', buildRules(config), vault)
+    expect(masked).toBe(ph('CUSTOMER', 1, 'k3f9'))
+    expect(unmask(masked, vault)).toBe('Nordic Widgets')
+    expect(unmask(ph('CUSTOMER', 1), vault)).toBe(ph('CUSTOMER', 1))
+    expect(unmask(ph('CUSTOMER', 1, 'aaaa'), vault)).toBe(ph('CUSTOMER', 1, 'aaaa'))
+  })
+
+  test('placeholders from another session are not masked again', () => {
+    const vault = new Vault('k3f9')
+    const text = `see ${ph('CUSTOMER', 7, 'aaaa')}`
+    expect(mask(text, buildRules({ customers: ['CUSTOMER'] }), vault)).toBe(text)
+  })
+
+  test('the stream unmasker restores a marked placeholder split anywhere', () => {
+    const vault = new Vault('k3f9')
+    mask('Acme Freight A/S', buildRules(config), vault)
+    const whole = `Hi ${ph('CUSTOMER', 1, 'k3f9')}!`
+    for (let cut = 1; cut < whole.length; cut++) {
+      const s = new StreamUnmasker(vault)
+      const out = s.push(whole.slice(0, cut)) + s.push(whole.slice(cut)) + s.flush()
+      expect(out).toBe('Hi Acme Freight A/S!')
+    }
   })
 })

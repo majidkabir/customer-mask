@@ -28,13 +28,13 @@ flowchart LR
 | | Text |
 | --- | --- |
 | A row in `shipments.csv` | `Acme Freight A/S,SHP12345678,ops@acme-freight.dk` |
-| What Claude receives | `<<CUSTOMER_1>>,<<SHIPMENT_1>>,<<EMAIL_n>>` |
-| Claude's reply, as Claude wrote it | `The customer is <<CUSTOMER_1>>, shipment <<SHIPMENT_1>> …` |
+| What Claude receives | `<<CUSTOMER_1.k3f9>>,<<SHIPMENT_1.k3f9>>,<<EMAIL_1.k3f9>>` |
+| Claude's reply, as Claude wrote it | `The customer is <<CUSTOMER_1.k3f9>>, shipment <<SHIPMENT_1.k3f9>> …` |
 | The reply on your screen | `The customer is Acme Freight A/S, shipment SHP12345678 …` |
-| The command Claude asked for | `echo "<<CUSTOMER_1>> / <<SHIPMENT_1>>" > out.txt` |
+| The command Claude asked for | `echo "<<CUSTOMER_1.k3f9>> / <<SHIPMENT_1.k3f9>>" > out.txt` |
 | What actually ran, and what's in `out.txt` | `Acme Freight A/S / SHP12345678` |
 
-These rows are from a real run, not a mock-up ([verification](docs/development.md#what-has-been-verified)).
+`k3f9` is a random marker chosen per session (diagrams leave it out for brevity). These rows are from a real run, not a mock-up ([verification](docs/development.md#what-has-been-verified)).
 
 ## Quick start
 

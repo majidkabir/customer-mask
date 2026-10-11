@@ -129,7 +129,7 @@ flowchart LR
     K -->|seen before| T2["same token CUSTOMER_1"]
 ```
 
-- **Format:** `<<LABEL_n>>`. The double angle brackets are rare in real text and code, and survive Markdown, JSON and shell quoting.
+- **Format:** `<<LABEL_n.mmmm>>`, e.g. `<<CUSTOMER_1.k3f9>>`. The double angle brackets are rare in real text and code, and survive Markdown, JSON and shell quoting. `mmmm` is a **random marker chosen once per session** (four lowercase letters or digits, kept across hot reloads). Only placeholders carrying this session's marker are ever restored, so text that merely looks like a placeholder (in a template, in code that handles placeholders, or from another session) is left exactly as written. The diagrams on this page leave the marker out for brevity.
 - **Stable:** the same value always gets the same placeholder within a session, whatever its case or spacing (phone numbers and IBANs also ignore separators). Claude can reason across turns ("CUSTOMER_1 again"), and the prompt cache stays warm because earlier messages never change.
 - **Idempotent:** text that already contains placeholders is never masked again.
 - **Where it lives:** in memory, mirrored to the session's `$.state` so it survives a hot reload of the mod. It is **not** written to disk by the mod. The transcript holds placeholders only.

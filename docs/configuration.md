@@ -104,8 +104,8 @@ See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for d
 customer-mask: active
 Config: 2 customer name(s), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__* from /home/me/.claude/customer-mask.json
 Replaced this session (3):
-  <<CUSTOMER_1>>  →  Acme Freight A/S
-  <<SHIPMENT_1>>  →  SHP12345678
+  <<CUSTOMER_1.k3f9>>  →  Acme Freight A/S
+  <<SHIPMENT_1.k3f9>>  →  SHP12345678
   ...
 ```
 

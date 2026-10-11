@@ -9,7 +9,8 @@ import {
   StreamUnmasker,
   MEDIA_BLOCKS,
   MEDIA_NOTE,
-  SYSTEM_NOTE,
+  newMarker,
+  systemNote,
   toolPolicy,
   unmaskDeep,
   Vault,
@@ -36,9 +37,10 @@ const CONFIG_FILE = '.claude/customer-mask.json'
 const TOOL_ENVELOPE = new Set(['tool', 'tool_use_id', 'agentId', 'requestMeta'])
 
 const vaultAtom = atom({ plugin: 'customer-mask', key: 'vault' } as const, [] as VaultEntry[])
+const markerAtom = atom({ plugin: 'customer-mask', key: 'marker' } as const, null as string | null)
 
 // Module state: rebuilt on every (re)load; the vault itself is restored from $.state.
-const vault = new Vault()
+let vault = new Vault()
 let rules = buildRules({})
 let configSummary = 'not loaded'
 let maskedList: readonly string[] = DEFAULT_MASKED_TOOLS
@@ -108,7 +110,15 @@ async function load($: EngineInterface): Promise<void> {
     blocked = `media must be "drop" or "allow", not ${JSON.stringify(media)}.`
   }
   dropMedia = media !== 'allow'
-  vault.load(await read($, vaultAtom), rules)
+  // The marker is chosen once per session and kept in $.state, so a hot
+  // reload keeps the same placeholders. A session whose vault predates
+  // markers keeps the legacy form, so its placeholders still resolve.
+  const entries = await read($, vaultAtom)
+  const saved = await read($, markerAtom)
+  const marker = saved ?? (entries.length > 0 ? '' : newMarker())
+  if (saved === null) await update($, markerAtom, () => marker)
+  vault = new Vault(marker)
+  vault.load(entries, rules)
   await reserveFromTranscript($)
 
   configSummary =
@@ -264,7 +274,7 @@ export const register: Register = on => {
     const { sections } = await next(e)
     const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text) } : s))
     await persist($, before)
-    return { sections: [...masked, { id: `${NAME}:note`, text: SYSTEM_NOTE, scope: 'session' as const }] }
+    return { sections: [...masked, { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const }] }
   })
 
   // CLAUDE.md and the other blocks of the first message.
@@ -300,7 +310,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'customer-mask' }, async $ => {
     await ready($)
-    const rows = vault.entries().map(v => `  <<${v.token}>>  →  ${v.value}`)
+    const rows = vault.entries().map(v => `  ${vault.format(v.token)}  →  ${v.value}`)
     return {
       text: [
         `${NAME}: ${blocked ? `BLOCKED — ${blocked}` : 'active'}`,

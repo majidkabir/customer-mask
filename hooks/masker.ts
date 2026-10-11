@@ -49,8 +49,20 @@ type Rule = {
   normalize: (value: string) => string
 }
 
-/** A placeholder as it appears in text the model reads. */
-const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+)>>/g
+/**
+ * A placeholder as it appears in text the model reads: a token (LABEL_n) and,
+ * since 0.2, a per-session marker after a dot. The marker means text that only
+ * looks like a placeholder (in code, in templates) is never taken for one.
+ * Group 1 is the token, group 2 the marker (absent in the legacy form).
+ */
+const PLACEHOLDER = /<<([A-Z][A-Z0-9_]*_\d+)(?:\.([a-z0-9]{4}))?>>/g
+
+/** A new per-session marker: four random lowercase letters or digits. */
+export function newMarker(): string {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const bytes = crypto.getRandomValues(new Uint8Array(4))
+  return Array.from(bytes, b => alphabet[b % alphabet.length]).join('')
+}
 
 const exact = (v: string) => v
 const lower = (v: string) => v.toLowerCase()
@@ -129,6 +141,22 @@ export class Vault {
   private byKey = new Map<string, string>()
   private byToken = new Map<string, VaultEntry>()
   private counters = new Map<string, number>()
+  /** This session's marker; '' is the legacy form without one. */
+  readonly marker: string
+
+  constructor(marker = '') {
+    this.marker = marker
+  }
+
+  /** The text that stands for `token` in this session. */
+  format(token: string): string {
+    return this.marker ? `<<${token}.${this.marker}>>` : `<<${token}>>`
+  }
+
+  /** The real value behind a placeholder, only when it carries this session's marker. */
+  resolve(token: string, marker: string | undefined): string | undefined {
+    return (marker ?? '') === this.marker ? this.valueOf(token) : undefined
+  }
 
   get size() {
     return this.byToken.size
@@ -198,14 +226,14 @@ export function mask(text: string, rules: readonly Rule[], vault: Vault): string
   let result = text
   for (const rule of rules) {
     result = outsidePlaceholders(result, plain =>
-      plain.replace(rule.regex, value => `<<${vault.tokenFor(rule.label, value, rule.normalize)}>>`),
+      plain.replace(rule.regex, value => vault.format(vault.tokenFor(rule.label, value, rule.normalize))),
     )
   }
   return result
 }
 
 export function unmask(text: string, vault: Vault): string {
-  return text.replace(PLACEHOLDER, (whole, token: string) => vault.valueOf(token) ?? whole)
+  return text.replace(PLACEHOLDER, (whole, token: string, marker: string | undefined) => vault.resolve(token, marker) ?? whole)
 }
 
 /** Unmasks every string inside a JSON-like value, leaving the listed top-level keys alone. */
@@ -252,13 +280,19 @@ export class StreamUnmasker {
 
 function holdFrom(buf: string): number {
   const i = buf.lastIndexOf('<<')
-  if (i >= 0 && buf.length - i <= 64 && /^<<[A-Z0-9_]*>?$/.test(buf.slice(i))) return i
+  if (i >= 0 && buf.length - i <= 72 && /^<<(?:[A-Z][A-Z0-9_]*(?:\.[a-z0-9]{0,4})?)?>?$/.test(buf.slice(i))) return i
   if (buf.endsWith('<')) return buf.length - 1
   return buf.length
 }
 
-export const SYSTEM_NOTE =
-  'Customer data in this conversation has been replaced with placeholders such as <<CUSTOMER_1>> or <<EMAIL_2>>. ' +
-  'Use a placeholder exactly as written wherever its real value belongs (prose, code, commands, file edits): ' +
-  'it is restored automatically before any tool runs and before the user reads your reply. ' +
-  'Never guess, reconstruct or invent the real values, and do not comment on the placeholders unless asked.'
+/** The note added to the system prompt, with examples in this session's form. */
+export function systemNote(vault: Vault): string {
+  const a = vault.format('CUSTOMER_1')
+  const b = vault.format('EMAIL_2')
+  return (
+    `Customer data in this conversation has been replaced with placeholders such as ${a} or ${b}. ` +
+    'Use a placeholder exactly as written, including the part after the dot, wherever its real value belongs ' +
+    '(prose, code, commands, file edits): it is restored automatically before any tool runs and before the user ' +
+    'reads your reply. Never guess, reconstruct or invent the real values, and do not comment on the placeholders unless asked.'
+  )
+}

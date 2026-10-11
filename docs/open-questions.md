@@ -10,7 +10,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ❓ Decision needed |
 | 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | ❓ Decision needed |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
-| 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ⚠️ Verified edge case |
+| 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ✅ Fixed in 0.2 |
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
 | 9 | [Is pseudonymisation enough for compliance?](#9-is-pseudonymisation-enough-for-compliance) | Compliance | ❓ Needs legal / DPO |
 | 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ❓ Decision needed |
@@ -76,11 +76,11 @@ Names are only masked if they are in `customers` or match a pattern. A new custo
 
 ### 7. Placeholder look-alikes in real text
 
-Any text matching `<<LABEL_n>>` whose token is in the vault is replaced with the real value **wherever Claude writes it**. This was hit for real while developing this repo with the mod active: a test file containing a literal placeholder string was written to disk with the real address instead. The tests now build placeholder strings at run time for that reason.
+**Was:** any text of the form `<<LABEL_n>>` whose token was in the vault got replaced with the real value wherever Claude wrote it. This was hit for real while developing this repo with the mod active: a test file containing a literal placeholder string was written to disk with a real address instead.
 
-**Impact:** low in normal code. It matters when working on code that itself handles these placeholders, or on templates that use `<<…>>` syntax.
+**Fixed (0.2):** placeholders carry a random per-session marker, `<<CUSTOMER_1.k3f9>>`, and only placeholders with this session's marker are restored. Text that only looks like a placeholder, or a placeholder from another session, is left as written. Verified live over 3 sessions, each with its own marker: Claude copied the marked placeholders exactly into a file and a shell command, and both got the real values.
 
-**Options:** a less common delimiter, or a per-session random marker such as `⟦CUSTOMER_1·k3f⟧`, which makes look-alikes practically impossible.
+**Compatibility:** a session that began on 0.1, before markers, keeps the old unmarked form until it ends, so its existing placeholders still resolve.
 
 ### 8. Which tools should keep placeholders
 

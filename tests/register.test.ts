@@ -3,7 +3,11 @@ import type { Engine } from 'claude-code/testing'
 import type { On, TurnStepChunk } from 'claude-code'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
-const ph = (label: string, n: number) => `<<${label}_${n}>>`
+const ph = (label: string, n: number, marker = '') =>
+  marker ? `<<${label}_${n}.${marker}>>` : `<<${label}_${n}>>`
+
+/** The session marker in masked text (placeholders look like LABEL_n.abcd inside double angle brackets). */
+const markerIn = (text: string) => /<<[A-Z][A-Z0-9_]*_\d+\.([a-z0-9]{4})>>/.exec(text)?.[1] ?? ''
 
 const CONFIG = JSON.stringify({
   customers: ['Acme Freight A/S'],
@@ -12,7 +16,7 @@ const CONFIG = JSON.stringify({
 
 type World = {
   files?: Record<string, string>
-  reply?: TurnStepChunk[]
+  reply?: TurnStepChunk[] | (() => TurnStepChunk[])
   sections?: { id: string; text: string; scope: 'shared' | 'session' }[]
   history?: { role: 'user' | 'assistant'; text: string; toolUses: never[] }[]
 }
@@ -35,7 +39,8 @@ function world(on: On, w: World = {}) {
   on('ui.status', () => ({ value: undefined }))
   on('turn.step', async function* () {
     seen.requestSent = true
-    for (const c of w.reply ?? []) yield c
+    const reply = typeof w.reply === 'function' ? w.reply() : (w.reply ?? [])
+    for (const c of reply) yield c
     return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
   on('tool.call', ($, e) => {
@@ -77,9 +82,11 @@ describe('outgoing: session.append', () => {
     expect(text).not.toContain('Acme Freight')
     expect(text).not.toContain('SHP12345678')
     expect(text).not.toContain('ops@acme.dk')
-    expect(text).toContain('<<CUSTOMER_1>>')
-    expect(text).toContain('<<SHIPMENT_1>>')
-    expect(text).toContain('<<EMAIL_1>>')
+    const m = markerIn(text)
+    expect(m).toMatch(/^[a-z0-9]{4}$/)
+    expect(text).toContain(ph('CUSTOMER', 1, m))
+    expect(text).toContain(ph('SHIPMENT', 1, m))
+    expect(text).toContain(ph('EMAIL', 1, m))
   })
 
   test('tool results (file contents, command output) are masked too', async ($, on) => {
@@ -104,15 +111,17 @@ describe('outgoing: session.append', () => {
 
 describe('incoming: turn.step', () => {
   test('the streamed reply shows real values, even with placeholders split across chunks', async ($, on) => {
+    let m = ''
     world(on, {
-      reply: [
-        { kind: 'text', index: 0, text: 'Shipment <<SHIP' },
-        { kind: 'text', index: 0, text: 'MENT_1>> for <' },
-        { kind: 'text', index: 0, text: '<CUSTOMER_1>> is delayed.' },
+      reply: () => [
+        { kind: 'text', index: 0, text: 'Shipment <' + '<SHIP' },
+        { kind: 'text', index: 0, text: `MENT_1.${m.slice(0, 2)}` },
+        { kind: 'text', index: 0, text: `${m.slice(2)}>` + '> for <' },
+        { kind: 'text', index: 0, text: `<CUSTOMER_1.${m}>` + '> is delayed.' },
         { kind: 'stop', stopReason: 'end_turn', usage: null },
       ],
     })
-    await appendPrompt($, 'Status of SHP12345678 for Acme Freight A/S?')
+    m = markerIn(JSON.stringify((await appendPrompt($, 'Status of SHP12345678 for Acme Freight A/S?')).message?.content))
 
     const chunks = await collect($.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 }))
     expect(textOf(chunks)).toBe('Shipment SHP12345678 for Acme Freight A/S is delayed.')
@@ -121,14 +130,14 @@ describe('incoming: turn.step', () => {
 
   test('a recorded reply is masked again before it is stored', async ($, on) => {
     world(on)
-    await appendPrompt($, 'Acme Freight A/S')
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
     const stored = await $.session.append({
       message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'Acme Freight A/S is fine.' }] },
       door: 'response',
       origin: { kind: 'model', model: 'claude' },
       uuid: 'u3',
     } as never)
-    expect(JSON.stringify(stored.message?.content)).toContain('<<CUSTOMER_1>> is fine.')
+    expect(JSON.stringify(stored.message?.content)).toContain(`${ph('CUSTOMER', 1, m)} is fine.`)
   })
 
   test('a broken config file blocks every request instead of leaking', async ($, on) => {
@@ -141,18 +150,39 @@ describe('incoming: turn.step', () => {
 
 describe('resumed sessions', () => {
   test('a new customer never reuses a placeholder number from the resumed transcript', async ($, on) => {
-    world(on, { history: [{ role: 'user', text: 'old: <<CUSTOMER_1>> <<CUSTOMER_2>>', toolUses: [] }] })
+    world(on, { history: [{ role: 'user', text: `old: ${ph('CUSTOMER', 1)} ${ph('CUSTOMER', 2)}`, toolUses: [] }] })
     const stored = await appendPrompt($, 'Acme Freight A/S')
-    expect(JSON.stringify(stored.message?.content)).toContain('<<CUSTOMER_3>>')
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).toContain(ph('CUSTOMER', 3, markerIn(text)))
+  })
+})
+
+describe('per-session marker', () => {
+  test('text that only looks like a placeholder is never restored', async ($, on) => {
+    const seen = world(on)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    const other = m === 'zzzz' ? 'yyyy' : 'zzzz'
+    const command = `printf '%s %s %s' '${ph('CUSTOMER', 1)}' '${ph('CUSTOMER', 1, other)}' '${ph('CUSTOMER', 1, m)}'`
+    await $.tool.call({ tool: 'Bash', command } as never)
+    expect(seen.ran).toBe(`printf '%s %s %s' '${ph('CUSTOMER', 1)}' '${ph('CUSTOMER', 1, other)}' 'Acme Freight A/S'`)
+  })
+
+  test('the system prompt note shows placeholders in this session\'s form', async ($, on) => {
+    world(on)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    const { sections } = await $.prompt.compose({
+      model: 'claude', promptModel: 'claude', surfaces: [], tools: [], outputStyle: null, traits: [],
+    })
+    expect(sections.at(-1)?.text).toContain(ph('CUSTOMER', 1, m))
   })
 })
 
 describe('tool calls', () => {
   test('placeholders in tool arguments are restored before the tool runs', async ($, on) => {
     const seen = world(on)
-    await appendPrompt($, 'Track SHP12345678 for Acme Freight A/S')
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Track SHP12345678 for Acme Freight A/S')).message?.content))
 
-    await $.tool.call({ tool: 'Bash', command: 'track --id <<SHIPMENT_1>> --customer "<<CUSTOMER_1>>"' } as never)
+    await $.tool.call({ tool: 'Bash', command: `track --id ${ph('SHIPMENT', 1, m)} --customer "${ph('CUSTOMER', 1, m)}"` } as never)
     expect(seen.ran).toBe('track --id SHP12345678 --customer "Acme Freight A/S"')
   })
 })
@@ -160,16 +190,16 @@ describe('tool calls', () => {
 describe('tools that send data off the machine', () => {
   test('WebSearch keeps its placeholders by default', async ($, on) => {
     const seen = world(on)
-    await appendPrompt($, 'Acme Freight A/S')
-    await $.tool.call({ tool: 'WebSearch', query: 'news about <<CUSTOMER_1>>' } as never)
-    expect(seen.ran).toBe('news about <<CUSTOMER_1>>')
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    await $.tool.call({ tool: 'WebSearch', query: `news about ${ph('CUSTOMER', 1, m)}` } as never)
+    expect(seen.ran).toBe(`news about ${ph('CUSTOMER', 1, m)}`)
   })
 
   test('maskedTools in the config replaces the default list', async ($, on) => {
     const config = JSON.stringify({ customers: ['Acme Freight A/S'], maskedTools: [] })
     const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config } })
-    await appendPrompt($, 'Acme Freight A/S')
-    await $.tool.call({ tool: 'WebSearch', query: 'news about <<CUSTOMER_1>>' } as never)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    await $.tool.call({ tool: 'WebSearch', query: `news about ${ph('CUSTOMER', 1, m)}` } as never)
     expect(seen.ran).toBe('news about Acme Freight A/S')
   })
 })
@@ -229,16 +259,16 @@ describe('images and PDFs', () => {
 describe('MCP tools', () => {
   test('an MCP tool keeps its placeholders by default', async ($, on) => {
     const seen = world(on)
-    await appendPrompt($, 'Acme Freight A/S')
-    await $.tool.call({ tool: 'mcp__slack__post_message', text: `about ${ph('CUSTOMER', 1)}` } as never)
-    expect(seen.ran).toBe(`about ${ph('CUSTOMER', 1)}`)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    await $.tool.call({ tool: 'mcp__slack__post_message', text: `about ${ph('CUSTOMER', 1, m)}` } as never)
+    expect(seen.ran).toBe(`about ${ph('CUSTOMER', 1, m)}`)
   })
 
   test('a tool listed in unmaskedTools gets real values', async ($, on) => {
     const config = JSON.stringify({ customers: ['Acme Freight A/S'], unmaskedTools: ['mcp__local_db__*'] })
     const seen = world(on, { files: { '/proj/.claude/customer-mask.json': config } })
-    await appendPrompt($, 'Acme Freight A/S')
-    await $.tool.call({ tool: 'mcp__local_db__query', text: `where name = '${ph('CUSTOMER', 1)}'` } as never)
+    const m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    await $.tool.call({ tool: 'mcp__local_db__query', text: `where name = '${ph('CUSTOMER', 1, m)}'` } as never)
     expect(seen.ran).toBe("where name = 'Acme Freight A/S'")
   })
 })
@@ -247,7 +277,8 @@ describe('session title', () => {
   test('the title is set from the masked prompt, so the stored title holds no customer data', async ($, on) => {
     world(on)
     const result = await $.classic.UserPromptSubmit({ prompt: 'Apology to Acme Freight A/S for SHP12345678' } as never)
-    expect(result.sessionTitle).toBe('Apology to <<CUSTOMER_1>> for <<SHIPMENT_1>>')
+    const m = markerIn(String(result.sessionTitle))
+    expect(result.sessionTitle).toBe(`Apology to ${ph('CUSTOMER', 1, m)} for ${ph('SHIPMENT', 1, m)}`)
   })
 })
 
@@ -269,7 +300,8 @@ describe('system prompt', () => {
       traits: [],
     })
     expect(sections.find(s => s.id === 'intro')?.text).toBe('You are Claude Code.')
-    expect(sections.find(s => s.id === 'env')?.text).toContain('repo of <<CUSTOMER_1>>')
+    const env = sections.find(s => s.id === 'env')?.text ?? ''
+    expect(env).toContain(`repo of ${ph('CUSTOMER', 1, markerIn(env))}`)
     expect(sections.at(-1)?.id).toBe('customer-mask:note')
   })
 })
