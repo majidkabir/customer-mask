@@ -567,3 +567,152 @@ describe('system prompt', () => {
     expect(sections.at(-1)?.id).toBe('customer-mask:note')
   })
 })
+
+/** A config like CONFIG with NER detection settings added. */
+const nerConfig = (extra: Record<string, unknown>) =>
+  JSON.stringify({ ...(JSON.parse(CONFIG) as object), ...extra })
+
+/**
+ * A stand-in for the local NER server, beneath the plugin: answers /health,
+ * and on /detect finds each of `names` (with its label) in every text it gets.
+ */
+function nerServer(on: On, names: Record<string, string>, w: { down?: boolean; slowMs?: number } = {}) {
+  const clock = mock.clock(on)
+  const seen = { detects: 0, texts: [] as string[] }
+  const answer = (body: unknown) => ({ value: { status: 200, ok: true, headers: {}, text: JSON.stringify(body) } })
+  on('http.fetch', async ($, e) => {
+    if (w.down) return { deny: 'connect ECONNREFUSED 127.0.0.1:8765' }
+    if (e.url.endsWith('/health')) return answer({ ok: true })
+    seen.detects += 1
+    const { texts } = JSON.parse(e.init?.body ?? '{}') as { texts: string[] }
+    seen.texts.push(...texts)
+    if (w.slowMs) await clock.sleep(w.slowMs)
+    return answer({
+      results: texts.map(t =>
+        Object.entries(names)
+          .filter(([n]) => t.includes(n))
+          .map(([n, label]) => ({ text: n, label, score: 0.9 })),
+      ),
+    })
+  })
+  return { seen, clock }
+}
+
+const NER_FILE = (extra: Record<string, unknown>) => ({ '/proj/.claude/customer-mask.json': nerConfig(extra) })
+
+describe('NER detection', () => {
+  test('detection "ner": names the model finds are masked, the list is not used, patterns still are', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner' }) })
+    nerServer(on, { 'Nordlys Trading': 'company', 'Lars Holm': 'person' })
+    const stored = await appendPrompt($, 'Lars Holm at Nordlys Trading asks about SHP12345678 and Acme Freight A/S')
+    const text = JSON.stringify(stored.message?.content)
+    const m = markerIn(text)
+    expect(text).not.toContain('Nordlys')
+    expect(text).not.toContain('Lars Holm')
+    expect(text).toContain(`${ph('PERSON', 1, m)} at ${ph('CUSTOMER', 1, m)}`)
+    expect(text).toContain(ph('SHIPMENT', 1, m))
+    // Not found by the model, and the list is off in this mode.
+    expect(text).toContain('Acme Freight A/S')
+  })
+
+  test('detection "both": the list and the model together', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'both' }) })
+    nerServer(on, { 'Nordlys Trading': 'company' })
+    const stored = await appendPrompt($, 'Acme Freight A/S and Nordlys Trading')
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).not.toContain('Acme')
+    expect(text).not.toContain('Nordlys')
+  })
+
+  test('"list" (the default) never calls the NER server', async ($, on) => {
+    world(on)
+    const { seen } = nerServer(on, { 'Nordlys Trading': 'company' })
+    const stored = await appendPrompt($, 'Nordlys Trading')
+    expect(JSON.stringify(stored.message?.content)).toContain('Nordlys Trading')
+    expect(seen.detects).toBe(0)
+  })
+
+  test('a value found once stays masked where the model is not asked (scope "prompts")', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner', ner: { scope: 'prompts' } }) })
+    const { seen } = nerServer(on, { 'Nordlys Trading': 'company' })
+    await appendPrompt($, 'Check Nordlys Trading')
+    const stored = await $.session.append({
+      message: { type: 'user', role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'NORDLYS TRADING,42' }] },
+      door: 'tool-result',
+      origin: { kind: 'tool', tool: 'Read' },
+      uuid: 'u2',
+    } as never)
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).not.toMatch(/nordlys/i)
+    expect(seen.texts).toEqual(['Check Nordlys Trading'])
+  })
+
+  test('real values come back in tool calls; the table records what the model found', async ($, on) => {
+    const seen = world(on, { files: NER_FILE({ detection: 'ner' }) })
+    nerServer(on, { 'Nordlys Trading': 'company' })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    const stored = await appendPrompt($, 'Nordlys Trading')
+    const m = markerIn(JSON.stringify(stored.message?.content))
+    await $.tool.call({ tool: 'Bash', command: `echo ${ph('CUSTOMER', 1, m)}` } as never)
+    expect(seen.ran).toBe('echo Nordlys Trading')
+    const saved = JSON.parse(seen.writes[VAULT_FILE] ?? '{}')
+    expect(saved.entries).toEqual([{ token: 'CUSTOMER_1', value: 'Nordlys Trading', label: 'CUSTOMER', source: 'ner' }])
+  })
+
+  test('words on the ignore list are left alone', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner', ner: { ignore: ['kubernetes'] } }) })
+    nerServer(on, { Kubernetes: 'company', Bash: 'person', 'Nordlys Trading': 'company' })
+    const stored = await appendPrompt($, 'Kubernetes and Bash for Nordlys Trading')
+    const text = JSON.stringify(stored.message?.content)
+    // Kubernetes is on this config's list; Bash is one of Claude Code's own words, always left alone.
+    expect(text).toContain('Kubernetes and Bash for')
+    expect(text).not.toContain('Nordlys')
+  })
+
+  test('the same text is sent to the server once (the system prompt, every request)', async ($, on) => {
+    world(on, {
+      files: NER_FILE({ detection: 'ner' }),
+      sections: [{ id: 'env', text: 'Repo of Nordlys Trading', scope: 'session' }],
+    })
+    const { seen } = nerServer(on, { 'Nordlys Trading': 'company' })
+    const input = { model: 'claude', promptModel: 'claude', surfaces: [], tools: [], outputStyle: null, traits: [] }
+    await $.prompt.compose(input)
+    const { sections } = await $.prompt.compose(input)
+    expect(sections.find(s => s.id === 'env')?.text).not.toContain('Nordlys')
+    expect(seen.detects).toBe(1)
+  })
+})
+
+describe('NER failing closed', () => {
+  test('a server that does not answer at start blocks every request', async ($, on) => {
+    const seen = world(on, { files: NER_FILE({ detection: 'ner' }) })
+    nerServer(on, {}, { down: true })
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0 } as never))
+    expect(textOf(chunks)).toContain('NER server at http://127.0.0.1:8765 does not answer')
+    expect(seen.requestSent).toBe(false)
+  })
+
+  test('a call that takes longer than ner.timeoutMs removes the row instead of storing it unmasked', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner', ner: { timeoutMs: 1000 } }) })
+    const { clock } = nerServer(on, { 'Nordlys Trading': 'company' }, { slowMs: 5000 })
+    const pending = appendPrompt($, 'Nordlys Trading')
+    await clock.advance(1500)
+    const stored = await pending
+    const text = JSON.stringify(stored.message?.content)
+    expect(text).not.toContain('Nordlys')
+    expect(text).toContain('could not check this content')
+  })
+
+  test('a bad NER setting blocks the session with the reason', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner', ner: { timeoutMs: 20000 } }) })
+    nerServer(on, {})
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0 } as never))
+    expect(textOf(chunks)).toContain('ner.timeoutMs must be from 100 to 8000')
+  })
+
+  test('an unknown detection mode blocks the session with the reason', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ai' }) })
+    const chunks = await collect($.turn.step({ turnId: 't', index: 0 } as never))
+    expect(textOf(chunks)).toContain('detection must be "list", "ner" or "both"')
+  })
+})

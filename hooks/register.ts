@@ -23,6 +23,16 @@ import {
   unmaskDeep,
   Vault,
   type MaskConfig,
+  detectionMode,
+  nerFinds,
+  nerRules,
+  nerSettings,
+  NER_DEFAULTS,
+  type Detection,
+  type NerEntity,
+  type NerFind,
+  type NerSettings,
+  type Rule,
 } from './masker'
 
 /*
@@ -57,12 +67,21 @@ let keepsPlaceholders = toolPolicy(DEFAULT_MASKED_TOOLS, [])
 let dropMedia = true
 let mediaDropped = 0
 let rowsRemoved = 0
+/** How names are found, and the NER server's settings (used unless detection is "list"). */
+let detection: Detection = 'list'
+let ner: NerSettings = NER_DEFAULTS
+/** NER answers by text, so text sent again (the system prompt, every request) is not sent to the model again. */
+const nerCache = new Map<string, NerFind[]>()
+const NER_CACHE_SIZE = 500
+const nerStats = { calls: 0, ms: 0, failures: 0 }
+/** Rows whose text the user typed: the ones NER checks with scope "prompts". */
+const PROMPT_DOORS = new Set(['prompt', 'queue'])
 /** The vault file beside this session's transcript, once the session's transcript is known. */
 let sessionFile: string | undefined
 /** This session's transcript, once known. */
 let transcriptPath: string | undefined
 /** Set when masking failed: from then on no request leaves this session. */
-const blocks = new Map<'load' | 'version' | 'config' | 'vault', string>()
+const blocks = new Map<'load' | 'version' | 'config' | 'vault' | 'ner', string>()
 /** Why this session is blocked, if it is: the first reason recorded. */
 const blocked = (): string | undefined => blocks.values().next().value
 let loading: Promise<void> | undefined
@@ -83,6 +102,7 @@ async function load($: EngineInterface): Promise<void> {
 
   try {
     applyConfig(await readConfig($))
+    await checkNer($)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     blocks.set('config', `${reason} Fix it, then run /customer-mask reload.`)
@@ -107,6 +127,8 @@ type LoadedConfig = {
   maskedList: readonly string[]
   unmaskedList: readonly string[]
   dropMedia: boolean
+  detection: Detection
+  ner: NerSettings
   summary: string
 }
 
@@ -122,6 +144,8 @@ async function readConfig($: EngineInterface): Promise<LoadedConfig> {
   let toolList: string[] | undefined
   let media: MaskConfig['media']
   let nameVariants: boolean | undefined
+  let detectionSetting: unknown
+  let nerConfig: MaskConfig['ner'] = {}
   const exceptions: string[] = []
   const sources: string[] = []
 
@@ -149,15 +173,19 @@ async function readConfig($: EngineInterface): Promise<LoadedConfig> {
       exceptions.push(...(part.unmaskedTools ?? []))
       if (part.media) media = part.media
       if (part.nameVariants !== undefined) nameVariants = part.nameVariants
+      if (part.detection !== undefined) detectionSetting = part.detection
+      if (part.ner) nerConfig = { ...nerConfig, ...part.ner }
       sources.push(path)
     } catch (err) {
       throw new Error(`${path} is not valid JSON (${String(err)}).`)
     }
   }
 
+  const mode = detectionMode(detectionSetting)
+  const nerUsed = nerSettings(nerConfig)
   let built: ReturnType<typeof buildRules>
   try {
-    built = buildRules({ customers, patterns, detectors, nameVariants })
+    built = buildRules({ customers, patterns, detectors, nameVariants, detection: mode })
   } catch (err) {
     throw new Error(`a pattern in the customer-mask config does not compile (${String(err)}).`)
   }
@@ -166,12 +194,18 @@ async function readConfig($: EngineInterface): Promise<LoadedConfig> {
   }
   const masked = toolList ?? DEFAULT_MASKED_TOOLS
   const isDropping = media !== 'allow'
+  const nerText =
+    `NER at ${nerUsed.url} (${Object.entries(nerUsed.labels).map(([k, v]) => `${k}→${v}`).join(', ')}; ` +
+    `${nerUsed.scope === 'all' ? 'all text' : 'typed prompts only'})`
   return {
     rules: built,
     maskedList: masked,
     unmaskedList: exceptions,
     dropMedia: isDropping,
+    detection: mode,
+    ner: nerUsed,
     summary:
+      `names found by: ${mode === 'list' ? 'the list' : mode === 'ner' ? `${nerText}; the list is not used` : `the list and ${nerText}`}, ` +
       `${customers.length} customer name(s) (${customers.filter(c => typeof c !== 'string' && c.hint).length} with a hint), ` +
       `${patterns.length} custom pattern(s), ` +
       `tools kept masked: ${masked.join(', ') || 'none'}` +
@@ -187,7 +221,96 @@ function applyConfig(c: LoadedConfig): void {
   unmaskedList = c.unmaskedList
   keepsPlaceholders = toolPolicy(maskedList, unmaskedList)
   dropMedia = c.dropMedia
+  detection = c.detection
+  ner = c.ner
+  nerCache.clear()
   configSummary = c.summary
+}
+
+/** Waits for `p` at most `ms` milliseconds; rejects after that. */
+async function withTimeout<T>($: EngineInterface, p: Promise<T>, ms: number): Promise<T> {
+  let timer: { cancel: () => void } | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = $.clock.after(ms, () => reject(new Error(`no answer within ${ms} ms`)))
+  })
+  try {
+    return await Promise.race([p, late])
+  } finally {
+    timer?.cancel()
+  }
+}
+
+/**
+ * Checks that the NER server answers, when detection uses it. A server that
+ * does not answer blocks the session: names would otherwise go unmasked.
+ */
+async function checkNer($: EngineInterface): Promise<void> {
+  if (detection === 'list') {
+    blocks.delete('ner')
+    return
+  }
+  try {
+    const res = await withTimeout($, $.http.fetch(`${ner.url}/health`), ner.timeoutMs)
+    if (!res.ok) throw new Error(`it answered HTTP ${res.status}`)
+    blocks.delete('ner')
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    blocks.set(
+      'ner',
+      `the NER server at ${ner.url} does not answer (${reason}). Start it (see tools/ner-server), then run /customer-mask reload.`,
+    )
+  }
+}
+
+/**
+ * Asks the NER server what it finds in `texts` (one request for all of them;
+ * text it already answered for comes from the cache). Rejects when the server
+ * fails or takes longer than `ner.timeoutMs`; the hook's fail-closed catch
+ * then removes the content.
+ */
+async function nerFind($: EngineInterface, texts: readonly string[]): Promise<NerFind[]> {
+  const todo = [...new Set(texts)].filter(t => t.trim() !== '' && !nerCache.has(t))
+  if (todo.length > 0) {
+    const started = Date.now()
+    nerStats.calls += 1
+    try {
+      const res = await withTimeout(
+        $,
+        $.http.fetch(`${ner.url}/detect`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ texts: todo, labels: Object.keys(ner.labels), threshold: ner.threshold }),
+        }),
+        ner.timeoutMs,
+      )
+      if (!res.ok) throw new Error(`the NER server answered HTTP ${res.status}`)
+      const data = JSON.parse(res.text) as { results?: unknown }
+      const results = data.results
+      if (!Array.isArray(results) || results.length !== todo.length || !results.every(Array.isArray)) {
+        throw new Error('the NER server answered in an unknown format')
+      }
+      todo.forEach((t, i) => {
+        if (nerCache.size >= NER_CACHE_SIZE) nerCache.delete(nerCache.keys().next().value as string)
+        nerCache.set(t, nerFinds(results[i] as NerEntity[], ner))
+      })
+    } catch (err) {
+      nerStats.failures += 1
+      throw err
+    } finally {
+      nerStats.ms += Date.now() - started
+    }
+  }
+  return texts.flatMap(t => nerCache.get(t) ?? [])
+}
+
+/**
+ * The rules NER adds for one piece of content: what the model finds in
+ * `texts` (when `ask`), plus every value it found earlier this session.
+ * None when detection is "list".
+ */
+async function nerExtra($: EngineInterface, texts: readonly string[], ask: boolean): Promise<Rule[]> {
+  if (detection === 'list') return []
+  return nerRules(ask ? await nerFind($, texts) : [], vault)
 }
 
 /**
@@ -205,6 +328,7 @@ async function reloadConfig($: EngineInterface): Promise<string> {
   }
   applyConfig(next)
   blocks.delete('config')
+  await checkNer($)
   await $.ui.invalidate('prompt.context')
   await $.ui.invalidate('prompt.section')
   $.ui.status(blocked() ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
@@ -288,27 +412,41 @@ async function attach($: EngineInterface, path: string, source: string): Promise
   await writeVaultFile($)
 }
 
-function maskText(text: string, options?: { hints?: boolean }): string {
-  return mask(text, rules, vault, options)
+/** Masks text with the configured rules, then `extra` (the NER rules for the content at hand). */
+function maskText(text: string, options?: { hints?: boolean }, extra: readonly Rule[] = []): string {
+  return mask(text, extra.length ? [...rules, ...extra] : rules, vault, options)
 }
 
 type Block = { type: string; [field: string]: unknown }
 
 const isMedia = (b: Block) => dropMedia && MEDIA_BLOCKS.has(b.type)
 
+/** The texts in a row's blocks that masking rewrites (what NER is asked about). */
+function textsOf(content: readonly Block[]): string[] {
+  const out: string[] = []
+  for (const b of content) {
+    if (b.type === 'text' && typeof b.text === 'string') out.push(b.text)
+    if (b.type === 'tool_result') {
+      if (typeof b.content === 'string') out.push(b.content)
+      else if (Array.isArray(b.content)) out.push(...textsOf(b.content as Block[]))
+    }
+  }
+  return out
+}
+
 /** Masks one block. Inside a tool result, media is replaced with a note (its content is ours to rewrite). */
-function maskBlock(block: Block): Block {
+function maskBlock(block: Block, extra: readonly Rule[]): Block {
   if (block.type === 'text' && typeof block.text === 'string') {
-    return { ...block, text: maskText(block.text) }
+    return { ...block, text: maskText(block.text, undefined, extra) }
   }
   if (block.type === 'tool_result') {
     const c = block.content
-    if (typeof c === 'string') return { ...block, content: maskText(c) }
+    if (typeof c === 'string') return { ...block, content: maskText(c, undefined, extra) }
     if (Array.isArray(c)) {
       return {
         ...block,
         content: (c as Block[]).map(inner => {
-          if (!isMedia(inner)) return maskBlock(inner)
+          if (!isMedia(inner)) return maskBlock(inner, extra)
           mediaDropped += 1
           return { type: 'text', text: MEDIA_NOTE }
         }),
@@ -322,14 +460,14 @@ function maskBlock(block: Block): Block {
  * Masks a row's blocks. A row's own media blocks may only be dropped, not
  * replaced, so the note goes into the row's first text block when it has one.
  */
-function maskContent(content: readonly Block[]): Block[] {
+function maskContent(content: readonly Block[], extra: readonly Rule[]): Block[] {
   const kept = content.filter(b => !isMedia(b))
   const dropped = content.length - kept.length
-  if (dropped === 0) return content.map(maskBlock)
+  if (dropped === 0) return content.map(b => maskBlock(b, extra))
   mediaDropped += dropped
   let noted = false
   return kept.map(b => {
-    const masked = maskBlock(b)
+    const masked = maskBlock(b, extra)
     if (noted || masked.type !== 'text' || typeof masked.text !== 'string') return masked
     noted = true
     return { ...masked, text: `${masked.text}\n\n${MEDIA_NOTE}` }
@@ -403,7 +541,8 @@ export const register: Register = on => {
   on('session.append', async ($, e, next) => {
     await ready($)
     const before = vault.size
-    const content = maskContent(e.message.content)
+    const extra = await nerExtra($, textsOf(e.message.content), ner.scope === 'all' || PROMPT_DOORS.has(e.door))
+    const content = maskContent(e.message.content, extra)
     await persist($, before)
     return next({ ...e, message: { ...e.message, content } })
   }).catch(($, e, next) =>
@@ -418,8 +557,10 @@ export const register: Register = on => {
     if (sessionFile === undefined && e.agent_id === undefined) await attach($, e.transcript_path, 'startup')
     const before = vault.size
     const result = await next(e)
+    const extra = result.sessionTitle === undefined ? await nerExtra($, [e.prompt], true) : []
     // The model never reads the title, so it does not use up a customer's one-time hint.
-    const title = result.sessionTitle ?? maskText(e.prompt, { hints: false }).replace(/\s+/g, ' ').trim().slice(0, 60)
+    const title =
+      result.sessionTitle ?? maskText(e.prompt, { hints: false }, extra).replace(/\s+/g, ' ').trim().slice(0, 60)
     await persist($, before)
     return { ...result, sessionTitle: title }
   }).catch(async ($, e, next) => ({ ...(await next(e)), sessionTitle: `${NAME}: title withheld` }))
@@ -480,7 +621,9 @@ export const register: Register = on => {
     await ready($)
     const before = vault.size
     const { sections } = await next(e)
-    const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text) } : s))
+    const own = sections.filter(s => s.scope === 'session').map(s => s.text)
+    const extra = await nerExtra($, own, ner.scope === 'all')
+    const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text, undefined, extra) } : s))
     await persist($, before)
     return { sections: [...masked, { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const }] }
   }).catch(async ($, e, next) => {
@@ -494,7 +637,8 @@ export const register: Register = on => {
     await ready($)
     const before = vault.size
     const result = await next(e)
-    const blocks = result.blocks.map(b => ({ ...b, text: maskText(b.text) }))
+    const extra = await nerExtra($, result.blocks.map(b => b.text), ner.scope === 'all')
+    const blocks = result.blocks.map(b => ({ ...b, text: maskText(b.text, undefined, extra) }))
     await persist($, before)
     return { ...result, blocks }
   }).catch(async ($, e, next) => {
@@ -508,7 +652,8 @@ export const register: Register = on => {
     await ready($)
     const before = vault.size
     const result = await next(e)
-    const masked = result.text === null ? result : { text: maskText(result.text) }
+    const extra = result.text === null ? [] : await nerExtra($, [result.text], ner.scope === 'all')
+    const masked = result.text === null ? result : { text: maskText(result.text, undefined, extra) }
     await persist($, before)
     return masked
   }).catch(() => ({ text: null })) // Masking failed: leave the injected text out.
@@ -555,6 +700,12 @@ export const register: Register = on => {
         `Config: ${configSummary}`,
         `Images/PDFs removed this session: ${mediaDropped}`,
         `Rows removed because masking failed: ${rowsRemoved}`,
+        ...(detection === 'list'
+          ? []
+          : [
+              `NER calls: ${nerStats.calls} (${nerStats.calls ? Math.round(nerStats.ms / nerStats.calls) : 0} ms on average), ` +
+                `failed: ${nerStats.failures}, values found: ${vault.learned().length}`,
+            ]),
         `Placeholder table saved to: ${sessionFile ?? 'not yet (no transcript known)'}`,
         rows.length ? `Replaced this session (${rows.length}):\n${rows.join('\n')}` : 'Nothing replaced yet.',
       ].join('\n'),

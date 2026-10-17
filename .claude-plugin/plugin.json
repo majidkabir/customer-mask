@@ -1,6 +1,6 @@
 {
   "name": "customer-mask",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Replaces customer data with placeholders before anything reaches the model, and restores it in replies and tool calls.",
   "author": {
     "name": "Majid"

@@ -157,8 +157,27 @@ Rules run in a fixed order, and the first rule to claim a span wins.
 | 5 | `CUSTOMER` | [aliases](configuration.md#aliases) of listed customers | As listed, any case, whole words; run just before the names, so a longer alias wins. Masked as the same customer |
 | 5 | `CUSTOMER` | customer names glued into a host name (`acmefreightgroup.com`) | Host name labels that start or end with a listed name of 4+ letters and digits; run after the names. Masked as the same customer, the whole label replaced |
 | 6 | `PHONE` | `+45 12 34 56 78`, `12 34 56 78` | International, or Danish 2-2-2-2 grouping |
+| 7 | `CUSTOMER`, `PERSON` (from [`ner.labels`](configuration.md#ner-object)) | names a local NER model finds | Only with [`detection: "ner"` or `"both"`](configuration.md#detection-list--ner--both); with `ner`, rows 5 are off. Also every value the model found earlier in the session |
 
-Detection is deliberately conservative. A false positive in code (masking a timestamp) changes what Claude sees, so the built-ins aim for precision. Recall for names comes from your list and its aliases.
+Detection is deliberately conservative. A false positive in code (masking a timestamp) changes what Claude sees, so the built-ins aim for precision. Recall for names comes from your list and its aliases, and optionally from a NER model.
+
+With NER on, a masking hook first sends the text to the NER server on your machine, then masks with the rules above plus what came back:
+
+```mermaid
+sequenceDiagram
+    participant CC as Claude Code
+    participant Mod as customer-mask
+    participant NER as NER server (localhost)
+    participant API as Anthropic API
+    CC->>Mod: row: "Lars Holm from Nordlys Trading…"
+    Mod->>NER: POST /detect (text, labels)
+    NER-->>Mod: person "Lars Holm", company "Nordlys Trading"
+    Note over Mod: list + patterns + these finds,<br/>finds remembered for the session
+    Mod-->>CC: "<<PERSON_1>> from <<CUSTOMER_2>>…"
+    CC->>API: placeholders only
+```
+
+The same text is sent to the server only once per session (the system prompt goes with every request). If the server fails or takes longer than `ner.timeoutMs`, the hook's fail-closed `.catch` removes the content, as for any masking failure (see [Failing closed](#7-failing-closed)).
 
 Masking hides values, not what the text around them says. A city, the goods shipped or a product can identify a well-known customer; see the [re-identification test](open-questions.md#19-re-identification-from-context).
 
@@ -195,10 +214,12 @@ flowchart TD
     V -- no --> B[["BLOCKED<br/>every model request is answered<br/>locally with an error; nothing is sent"]]
     V -- yes --> L{Config loads<br/>and compiles?}
     L -- "no (bad JSON, bad regex,<br/>bad media value)" --> B
-    L -- yes --> F{Saved placeholder<br/>table readable?}
+    L -- yes --> N{NER on? Then:<br/>NER server answers?}
+    N -- no --> B
+    N -- "yes, or NER off" --> F{Saved placeholder<br/>table readable?}
     F -- no --> B
     F -- "yes, or none yet" --> R[Masking active]
-    R --> A{Masking a row, context<br/>or system prompt part<br/>throws or takes over 10 s?}
+    R --> A{Masking a row, context<br/>or system prompt part<br/>throws, takes over 10 s,<br/>or its NER call fails?}
     A -- no --> R
     A -- yes --> X[Its text is replaced<br/>by a note before it is<br/>stored or sent]
     R --> I{Masking injected<br/>text fails?}
@@ -214,7 +235,7 @@ flowchart TD
     class B,D,X,O bad
 ```
 
-When blocked, the status line shows `🔒 customer-mask: BLOCKED`, and `/customer-mask` says why. For a config problem, fix it and run `/customer-mask reload`; for an old Claude Code or an unreadable placeholder table, fix it and restart the session. `/customer-mask` also counts rows removed because masking failed.
+When blocked, the status line shows `🔒 customer-mask: BLOCKED`, and `/customer-mask` says why. For a config problem or a NER server that wasn't running, fix it and run `/customer-mask reload`; for an old Claude Code or an unreadable placeholder table, fix it and restart the session. `/customer-mask` also counts rows removed because masking failed.
 
 The end-of-session cleanup is best effort: if it fails, or the session doesn't end cleanly (a crash, a killed process), the local copies stay as Claude Code wrote them. Run `tools/clean-transcripts.mjs` then.
 

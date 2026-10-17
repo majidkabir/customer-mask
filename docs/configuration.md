@@ -10,9 +10,9 @@ customer-mask reads up to three JSON files and **merges** them:
 | 2 | `~/.claude/customer-mask.json` (`~` is `HOME`, or `USERPROFILE` on Windows) | your own defaults across all projects |
 | 3 | `.claude/customer-mask.json` in the folder Claude Code was started in | customers specific to one repository |
 
-`customers`, `patterns` and `unmaskedTools` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools`, `media` and `nameVariants` are taken from the last file that sets them. A file that doesn't exist or can't be read is skipped.
+`customers`, `patterns` and `unmaskedTools` from all files are combined. `detectors` are merged key by key, with later files winning. `maskedTools`, `media`, `nameVariants` and `detection` are taken from the last file that sets them, and `ner` is merged key by key. A file that doesn't exist or can't be read is skipped.
 
-Config is read when the session starts. After editing it, run `/customer-mask reload` to apply it to the running session. A config that doesn't load (bad JSON, a pattern that doesn't compile, a `media` value other than `drop` or `allow`) is **not** applied on reload: the working one stays in force and the command says why. At session start, a broken config blocks the session until it's fixed and reloaded.
+Config is read when the session starts. After editing it, run `/customer-mask reload` to apply it to the running session. A config that doesn't load (bad JSON, a pattern that doesn't compile, a `media`, `detection` or `ner` value that isn't allowed) is **not** applied on reload: the working one stays in force and the command says why. At session start, a broken config blocks the session until it's fixed and reloaded.
 
 With no file at all, the built-in detectors still run (email, phone, IBAN, CPR).
 
@@ -128,6 +128,89 @@ What happens to images and PDFs (screenshots, scanned invoices, pasted pictures)
 
 Any other value blocks the session.
 
+### `detection`: "list" | "ner" | "both"
+
+How customer names are found. `patterns` and `detectors` apply in every mode.
+
+| Value | Names come from | Use it when |
+| --- | --- | --- |
+| `list` (default) | `customers` | you know your customers; fastest and exact |
+| `ner` | a local NER model; `customers` is not used | you have no list |
+| `both` | the list, then the model for anything the list missed | you want the list's precision plus a safety net |
+
+A NER (named entity recognition) model is a small model trained to find names in text: companies, people, places. It runs on your machine, in the [NER server](#the-ner-server) the mod calls before masking. It finds names you never listed, but not all of them, and it sometimes flags ordinary words. So the list stays the reliable layer, and `both` is the usual choice.
+
+How it behaves:
+
+- **A value the model finds once stays masked** for the rest of the session, in any case and spacing, also where the model misses it or isn't asked. These values are saved in the placeholder table, marked `"source": "ner"`, so a resumed session keeps them.
+- **It fails closed.** If the server doesn't answer when the session starts, every request is blocked until it does (start it, then `/customer-mask reload`). A call that fails or takes longer than `ner.timeoutMs` removes that content, as any masking failure does.
+- **Not every find is masked.** Words that can't be a name are skipped: code (`onMatch`, `RAW_FIELDS`, anything with `_ = ( ) < >` and so on), words that start in lower case, a bare legal suffix (`AG`, `LLC`), the placeholder labels, and Claude Code's own words (`Claude`, `Bash`, `WebFetch`, `JSON`, …). A side effect: a name written in camelCase, such as `PostNord`, is skipped too. List those in `customers`.
+
+### `ner`: object
+
+Settings for `detection: "ner"` or `"both"`. All optional:
+
+```json
+{
+  "detection": "both",
+  "ner": {
+    "url": "http://127.0.0.1:8765",
+    "labels": { "company": "CUSTOMER", "person": "PERSON" },
+    "threshold": 0.5,
+    "timeoutMs": 4000,
+    "scope": "all",
+    "ignore": ["Kubernetes", "Terraform"]
+  }
+}
+```
+
+| Key | Default | What it does |
+| --- | --- | --- |
+| `url` | `http://127.0.0.1:8765` | where the NER server listens. Text is sent here, so keep it on your machine or a server in your network |
+| `labels` | `{ "company": "CUSTOMER", "person": "PERSON" }` | what to look for, and the placeholder label each find gets. GLiNER takes any words (`"street address": "ADDRESS"`); spaCy knows `company`, `person`, `location`, `city`, `country` and `address` (and a few synonyms such as `organization`) |
+| `threshold` | `0.5` | lowest confidence, from 0 to 1, that counts as a find (GLiNER gives one; spaCy doesn't, so every spaCy find counts) |
+| `timeoutMs` | `4000` | longest a call may take, 100 to 8000. Claude Code gives a hook 10 s in all |
+| `scope` | `all` | `all`: everything Claude gets is checked (prompts, file contents, command output, `CLAUDE.md`, the per-session parts of the system prompt). `prompts`: only what you type. Faster, and file contents are then covered by the list, patterns and values found earlier |
+| `ignore` | `[]` | words the model flags that you never want masked, any case |
+
+### The NER server
+
+[`tools/ner-server/server.py`](../tools/ner-server/server.py) runs the model and answers the mod on `http://127.0.0.1:8765`. It listens on this machine only, and it logs nothing it is sent. Two backends:
+
+| Backend | Install | Good at |
+| --- | --- | --- |
+| `spacy` | `pip install spacy` and a model: `python -m spacy download en_core_web_lg` (Danish: `da_core_news_lg`) | fast on a CPU; organizations, people and places only |
+| `gliner` (default) | `pip install gliner` (brings PyTorch); the model `urchade/gliner_multi_pii-v1` downloads from Hugging Face on first start | any label you name, many languages, built for personal data. Slower without a GPU |
+
+```bash
+python3 tools/ner-server/server.py --backend spacy     # or: --backend gliner
+python3 tools/ner-server/server.py --model da_core_news_lg --backend spacy --port 9000
+```
+
+The server reads text line by line, without the line numbers Claude Code's Read tool adds, because models find names in a table row or a log line better that way. It can also run on one machine for a whole team: start it with `--host 0.0.0.0` and point `ner.url` there. Then the text travels over your network to it, so put it behind your own TLS and access control.
+
+Any server that speaks the same JSON works, for example one wrapping Presidio:
+
+```
+GET  /health  → 200
+POST /detect  { "texts": ["…"], "labels": ["company", "person"], "threshold": 0.5 }
+           → { "results": [[{ "text": "Nordlys Trading", "label": "company", "score": 0.93 }], …] }
+```
+
+One list per text, in order. `label` is one of the labels asked for; `score` is optional.
+
+**Speed.** Measured with the spaCy backend (`en_core_web_lg`) on the cloud machine this was tested on (2 cores of a 2.1 GHz Xeon, no GPU). The first row is from real sessions, read from Claude Code's debug log; the others are calls to the server:
+
+| Text | NER call | The whole masking hook |
+| --- | --- | --- |
+| a prompt, a short tool result (≤ 0.5 KB) | 8–20 ms | 13–35 ms, against 2–4 ms with `list` in the same session |
+| 10 KB | 0.16–0.25 s | |
+| 100 KB (a big file or log) | 1.7–2.1 s | |
+
+Text the server already answered for (the system prompt, sent with every request) is not sent again. GLiNER was not measured here (Hugging Face was not reachable from the test machine). Expect it to be several times slower on a CPU: check that your largest tool results finish inside `timeoutMs`, or use `scope: "prompts"`.
+
+**Recall.** On 16 names in 9 short business texts (unlisted Danish companies and people), `en_core_web_lg` found 16. `en_core_web_sm` found 14, and in a real session it missed `Nordlys Trading` in a longer prompt, which then reached Claude unmasked. A miss is a leak, so use the large model, and keep the customers you know in the list. On source code, spaCy also flags many identifiers. The filter above drops most of them (in one 38 KB file, 102 distinct finds became about 20, such as `Vault` or `Map`), and the rest are masked like names: safe, but noisy. For coding work, `scope: "prompts"` avoids that.
+
 ## Keeping the customer list current
 
 The name list is where recall comes from: a customer that is missing from it is not masked. Options, roughly in order of effort:
@@ -136,7 +219,7 @@ The name list is where recall comes from: a customer that is missing from it is 
 2. **A scheduled export** from the CRM or master-data system into a file, with `CUSTOMER_MASK_CONFIG` pointing at it. One JSON file with `customers` is enough.
 3. **A shared file managed centrally** (e.g. via MDM or a config repo) for a whole team. [Team rollout](team-rollout.md#2-maintain-one-customer-list) has a script that builds it from a CRM export.
 
-See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for detection beyond lists.
+For customers that aren't on the list, see [`detection`](#detection-list--ner--both) and [open questions #5](open-questions.md#5-recall-customers-not-in-the-list).
 
 ## Checking what was loaded
 
@@ -146,7 +229,7 @@ See [open questions](open-questions.md#5-recall-customers-not-in-the-list) for d
 
 ```
 customer-mask: active
-Config: 2 customer name(s) (1 with a hint), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__*, images/PDFs: dropped from /home/me/.claude/customer-mask.json
+Config: names found by: the list, 2 customer name(s) (1 with a hint), 3 custom pattern(s), tools kept masked: WebSearch, WebFetch, mcp__* except mcp__local_db__*, images/PDFs: dropped from /home/me/.claude/customer-mask.json
 Images/PDFs removed this session: 0
 Rows removed because masking failed: 0
 Placeholder table saved to: /home/me/.claude/projects/-home-me-proj/5b1c0a2e.customer-mask.json

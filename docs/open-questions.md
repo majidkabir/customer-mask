@@ -8,7 +8,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 2 | [Headless final result text stays masked](#2-headless-final-result-text-stays-masked) | UX | ✅ Fixed in 0.3 (`tools/unmask.mjs`) |
 | 3 | [Local copies Claude Code writes itself](#3-local-copies-claude-code-writes-itself) | Local storage | ✅ Fixed in 0.4, completed in 0.4.1 |
 | 4 | [Vault persistence across restarts](#4-vault-persistence-across-restarts) | Design | ✅ Fixed in 0.3 (beside the session) |
-| 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | 🟡 Variants fixed in 0.2; NER open |
+| 5 | [Recall: customers not in the list](#5-recall-customers-not-in-the-list) | Detection | 🟡 Variants in 0.2, aliases in 0.5, optional NER in 0.6; misses remain |
 | 6 | [Images, PDFs and other binary content](#6-images-pdfs-and-other-binary-content) | Coverage | ✅ Fixed in 0.2 (dropped) |
 | 7 | [Placeholder look-alikes in real text](#7-placeholder-look-alikes-in-real-text) | Correctness | ✅ Fixed in 0.2 |
 | 8 | [Which tools should keep placeholders](#8-which-tools-should-keep-placeholders) | Policy | ✅ Fixed in 0.2 |
@@ -16,7 +16,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 10 | [Enforcing it for a team](#10-enforcing-it-for-a-team) | Rollout | ✅ Kit in 0.4; `--safe-mode` gap remains |
 | 11 | [Effect on answer quality](#11-effect-on-answer-quality) | Quality | ✅ Hints added in 0.4 |
 | 12 | [Thinking blocks](#12-thinking-blocks) | Coverage | ℹ️ By design |
-| 13 | [Performance](#13-performance) | Engineering | ✅ Masking speed fixed in 0.2; token overhead open |
+| 13 | [Performance](#13-performance) | Engineering | ✅ Masking speed fixed in 0.2; NER latency measured in 0.6; token overhead open |
 | 14 | [Mods API stability](#14-mods-api-stability) | Engineering | ✅ Minimum version enforced in 0.2 |
 | 15 | [Licence](#15-licence) | Repo | ✅ MIT |
 | 16 | [Prompt hooks failing open](#16-prompt-hooks-failing-open) | Correctness | ✅ Fixed in 0.4.1 |
@@ -81,10 +81,14 @@ Names are only masked if they are in `customers` or match a pattern.
 
 **Added (0.5):** [aliases](configuration.md#aliases) per customer (brands, addresses, websites, abbreviations), and names glued into a host name (`legogroup.com`), both masked as the same customer.
 
-**Still open:** customers not in the list at all, misspellings, and names glued to another word outside host names.
-- Generate the list from the CRM on a schedule (see [configuration](configuration.md#keeping-the-customer-list-current)). This is the recommended next step.
-- Add NER-based detection, such as a local [Microsoft Presidio](https://microsoft.github.io/presidio/) service called through `$.http`. This catches person and organisation names, but it adds a local service, latency, and false positives in code.
-- Edit-distance matching for misspellings: risky in code, where near-misses are common.
+**Added (0.6): optional NER detection.** With [`detection: "ner"` or `"both"`](configuration.md#detection-list--ner--both), a local NER model ([`tools/ner-server`](../tools/ner-server/server.py), spaCy or GLiNER) finds company and person names that aren't on the list. A name it finds once stays masked for the rest of the session. If the server doesn't answer, the session is blocked; a call that fails or is too slow removes that content. Verified live (spaCy `en_core_web_lg`): a prompt naming an unlisted company and person, and a CSV of unlisted customers and contacts read by Claude, reached the model as placeholders only, and the file Claude wrote had the real values.
+
+**Still open:**
+- **NER misses names, and a miss is a leak.** `en_core_web_sm` missed an unlisted company in a real prompt; `en_core_web_lg` found all 16 names in the test texts, but that is a small sample. Keep known customers in the list (`both`).
+- **NER is noisy on code.** spaCy tags identifiers as organizations. A filter drops most of them, and names written in camelCase (`PostNord`) are dropped with them. The rest are masked: safe, but Claude sees placeholders for some ordinary words. `ner.scope: "prompts"` avoids it for coding work.
+- **NER is slower on big text**: about 2 s per 100 KB on a CPU with spaCy (see [configuration](configuration.md#the-ner-server)). A tool result that takes longer than `ner.timeoutMs` is removed. GLiNER was not tested (its model host was unreachable from the test machine).
+- **The end-of-session cleanup does not use NER.** Local copies of output the model only saw part of (a long result cut to a preview) are cleaned with the list, the patterns and the values found during the session, not with the model.
+- Misspellings and names glued to another word outside host names. Edit-distance matching is risky in code, where near-misses are common. Generating the list from the CRM on a schedule (see [configuration](configuration.md#keeping-the-customer-list-current)) is still the most reliable way to cover known customers.
 
 ### 6. Images, PDFs and other binary content
 
@@ -147,6 +151,8 @@ Thinking is unmasked for **display** only. The thinking the transcript keeps is 
 
 - If masking a row ever throws or runs out of time anyway, the row is stored with its text removed (`session.append` now has a fail-closed `.catch`), never as it was.
 - `tests/scale.test.ts` fails if any of its cases (up to 50,000 names over 1 MB) takes 5 s or more.
+
+**NER (0.6):** with `detection: "ner"` or `"both"`, each masking hook first calls the local NER server. With spaCy on a CPU that adds about 10–30 ms for a prompt and about 2 s for 100 KB of text; the numbers are in [configuration](configuration.md#the-ner-server).
 
 **Still open: token overhead.** A placeholder such as `<<CUSTOMER_14.h5xz>>` usually takes more tokens than the value it replaces. In a real session where Claude read a 257 KB log with three customer values on every line, input tokens rose by about 20% and the session took about 30% longer (13 s → 17 s, two paired runs); about 1 s of that was the mod's own work, the rest the model reading more tokens. Sessions with few customer values are affected far less, but that hasn't been measured cleanly. A shorter placeholder format would cut the overhead; it needs a test that Claude still copies it reliably.
 

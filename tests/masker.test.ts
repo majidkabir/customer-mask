@@ -16,6 +16,11 @@ import {
   unmaskDeep,
   Vault,
   vaultFileFor,
+  detectionMode,
+  nerFinds,
+  nerRules,
+  nerSettings,
+  looksLikeName,
 } from '../hooks/masker'
 
 /** Builds a placeholder at run time, so no literal token sits in this file. */
@@ -442,5 +447,90 @@ describe('customer aliases', () => {
   test('non-string aliases are ignored', () => {
     const r = buildRules({ customers: [{ name: 'LEGO A/S', aliases: [42, 'DUPLO'] as never }] })
     expect(mask('DUPLO', r, new Vault('k3f9'))).toBe(ph('CUSTOMER', 1, 'k3f9'))
+  })
+})
+
+describe('NER helpers', () => {
+  test('settings: defaults, a trailing slash dropped, labels made placeholder labels', () => {
+    const s = nerSettings({ url: 'http://10.0.0.5:9000/', labels: { 'street address': 'street address' } })
+    expect(s.url).toBe('http://10.0.0.5:9000')
+    expect(s.labels).toEqual({ 'street address': 'STREET_ADDRESS' })
+    expect(s.timeoutMs).toBe(4000)
+    expect(s.scope).toBe('all')
+    expect(nerSettings().labels).toEqual({ company: 'CUSTOMER', person: 'PERSON' })
+  })
+
+  test('settings: wrong values are refused with a reason', () => {
+    expect(() => nerSettings({ url: 'ftp://x' })).toThrow('ner.url')
+    expect(() => nerSettings({ threshold: 2 })).toThrow('ner.threshold')
+    expect(() => nerSettings({ timeoutMs: 9000 })).toThrow('ner.timeoutMs')
+    expect(() => nerSettings({ scope: 'tools' as never })).toThrow('ner.scope')
+    expect(() => nerSettings({ labels: {} })).toThrow('ner.labels')
+    expect(() => detectionMode('regex')).toThrow('detection must be')
+    expect(detectionMode(undefined)).toBe('list')
+  })
+
+  test('finds: mapped labels only, above the threshold, no placeholders, no ignored words', () => {
+    const s = nerSettings({ ignore: ['GitHub'] })
+    const finds = nerFinds(
+      [
+        { text: ' Nordlys Trading ', label: 'company', score: 0.9 },
+        { text: 'Lars Holm', label: 'person', score: 0.3 },
+        { text: 'Aarhus', label: 'location', score: 0.9 },
+        { text: 'github', label: 'company', score: 0.9 },
+        { text: ph('CUSTOMER', 1, 'k3f9'), label: 'company', score: 0.9 },
+        { text: 'X', label: 'company' },
+        { text: 'Bash', label: 'person', score: 0.9 },
+      ],
+      s,
+    )
+    expect(finds).toEqual([{ value: 'Nordlys Trading', label: 'CUSTOMER' }])
+  })
+
+  test('rules: mask the finds, then keep masking them as learned values', () => {
+    const vault = new Vault('k3f9')
+    const out = mask('Nordlys Trading and Lars Holm', [], vault, {})
+    expect(out).toBe('Nordlys Trading and Lars Holm')
+    const r = nerRules([{ value: 'Nordlys Trading', label: 'CUSTOMER' }, { value: 'Lars Holm', label: 'PERSON' }], vault)
+    expect(mask('Nordlys Trading and Lars Holm', r, vault)).toBe(`${ph('CUSTOMER', 1, 'k3f9')} and ${ph('PERSON', 1, 'k3f9')}`)
+    expect(vault.learned()).toHaveLength(2)
+    // Later, with nothing new found: learned values still match, in any case and spacing.
+    const later = mask('NORDLYS   TRADING', nerRules([], vault), vault)
+    expect(later).toMatch(/^<<CUSTOMER_1-2\.k3f9>>$/)
+    expect(unmask(later, vault)).toBe('NORDLYS   TRADING')
+  })
+
+  test('detection "ner" leaves the customer list out of the rules', () => {
+    const r = buildRules({ customers: ['Acme Freight A/S'], detection: 'ner' })
+    expect(mask('Acme Freight A/S', r, new Vault('k3f9'))).toBe('Acme Freight A/S')
+  })
+
+  test('a learned value survives a saved table and a reload', () => {
+    const vault = new Vault('k3f9')
+    mask('Nordlys Trading', nerRules([{ value: 'Nordlys Trading', label: 'CUSTOMER' }], vault), vault)
+    const file = parseVaultFile(JSON.stringify({ version: 1, marker: 'k3f9', entries: vault.entries() }))
+    const again = new Vault('k3f9')
+    again.load(file.entries, [])
+    expect(mask('nordlys trading', nerRules([], again), again)).toBe(ph('CUSTOMER', 1, 'k3f9').replace('_1.', '_1-2.'))
+  })
+
+  test('code the model mistook for a name is not a name', () => {
+    for (const v of ['onMatch', 'NerSettings', 'RAW_FIELDS', '0 && variant', 'AG', 'B.V.', 'null', 'x = 1', 'Map<string>']) {
+      expect(looksLikeName(v)).toBe(false)
+    }
+    for (const v of ['Hansen & Søn A/S', "O'Brien Freight", 'DSV', 'Nordlys Trading', '3M', 'Mette Sørensen', 'Ørsted A/S']) {
+      expect(looksLikeName(v)).toBe(true)
+    }
+  })
+
+  test('finds: placeholder labels and trailing quotes', () => {
+    const finds = nerFinds(
+      [
+        { text: 'CUSTOMER', label: 'company' },
+        { text: "'Fjordline Logistics',", label: 'company' },
+      ],
+      nerSettings(),
+    )
+    expect(finds).toEqual([{ value: 'Fjordline Logistics', label: 'CUSTOMER' }])
   })
 })

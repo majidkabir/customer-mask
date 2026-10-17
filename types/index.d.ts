@@ -4,6 +4,8 @@ export type VaultEntry = {
   label: string
   /** The customer's hint, on its first spelling's entry only. */
   hint?: string
+  /** `ner` when the NER model found the value rather than the list or a pattern. */
+  source?: 'ner'
 }
 
 declare module 'claude-code' {

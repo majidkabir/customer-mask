@@ -64,6 +64,10 @@ Run it on a schedule (daily is usually enough) and distribute the output with MD
 
 Sessions read the list when they start, so a new customer is masked from the next session on; a running session picks it up with `/customer-mask reload`. Users can still add their own project-specific names in `.claude/customer-mask.json`; both lists are combined.
 
+### Optional: NER for customers not on the list
+
+To also catch names the list misses ([`detection`](configuration.md#detection-list--ner--both)), add `"detection": "both"` to the central `customers.json` and run the [NER server](configuration.md#the-ner-server) on every machine, for example as a login service. Or run one for the team with `--host 0.0.0.0` and set `ner.url` to it; then prompts and file contents travel over your network to that server, so give it TLS and access control. Where the server can't be reached, sessions are blocked until it can.
+
 ## 3. Deploy managed settings
 
 Managed settings live in a system folder and override everything a user sets:

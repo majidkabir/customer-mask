@@ -32,6 +32,154 @@ export type MaskConfig = {
    * Default true.
    */
   nameVariants?: boolean
+  /**
+   * How names are found: `list` (default) from `customers`; `ner` by a local
+   * NER model instead of the list; `both`. Patterns and the built-in detectors
+   * (email, phone, IBAN, CPR) apply in every mode.
+   */
+  detection?: Detection
+  /** The local NER server, for `detection: "ner"` or `"both"`. */
+  ner?: NerConfig
+}
+
+export type Detection = 'list' | 'ner' | 'both'
+
+export type NerConfig = {
+  /** Where the NER server listens; default http://127.0.0.1:8765. Keep it on this machine or your network. */
+  url?: string
+  /** What the model looks for, mapped to the placeholder label: default { company: CUSTOMER, person: PERSON }. */
+  labels?: Record<string, string>
+  /** Lowest confidence (0 to 1) that counts as a find; default 0.5. */
+  threshold?: number
+  /** How long one call may take, in ms; default 4000, at most 8000 (a hook has 10 s in all). */
+  timeoutMs?: number
+  /** `all` (default): every text the model gets; `prompts`: only what the user types (faster). */
+  scope?: 'all' | 'prompts'
+  /** Words the model may flag that are never masked (product names, tools), any case. */
+  ignore?: string[]
+}
+
+/** The NER settings in force: every field set. */
+export type NerSettings = Required<NerConfig>
+
+export const NER_DEFAULTS: NerSettings = {
+  url: 'http://127.0.0.1:8765',
+  labels: { company: 'CUSTOMER', person: 'PERSON' },
+  threshold: 0.5,
+  timeoutMs: 4000,
+  scope: 'all',
+  ignore: [],
+}
+
+/** Checks and completes NER settings; throws with a readable reason. */
+export function nerSettings(config: NerConfig = {}): NerSettings {
+  const s: NerSettings = { ...NER_DEFAULTS, ...config }
+  if (typeof s.url !== 'string' || !/^https?:\/\/[^\s]+$/.test(s.url)) {
+    throw new Error(`ner.url must be an http(s) URL, not ${JSON.stringify(s.url)}.`)
+  }
+  const labels = s.labels
+  if (labels === null || typeof labels !== 'object' || Object.keys(labels).length === 0 ||
+      Object.values(labels).some(v => typeof v !== 'string')) {
+    throw new Error('ner.labels must map each thing to find to a placeholder label, e.g. { "company": "CUSTOMER" }.')
+  }
+  if (typeof s.threshold !== 'number' || s.threshold < 0 || s.threshold > 1) {
+    throw new Error(`ner.threshold must be a number from 0 to 1, not ${JSON.stringify(s.threshold)}.`)
+  }
+  if (typeof s.timeoutMs !== 'number' || s.timeoutMs < 100 || s.timeoutMs > 8000) {
+    throw new Error(`ner.timeoutMs must be from 100 to 8000, not ${JSON.stringify(s.timeoutMs)}.`)
+  }
+  if (s.scope !== 'all' && s.scope !== 'prompts') {
+    throw new Error(`ner.scope must be "all" or "prompts", not ${JSON.stringify(s.scope)}.`)
+  }
+  if (!Array.isArray(s.ignore) || s.ignore.some(w => typeof w !== 'string')) {
+    throw new Error('ner.ignore must be a list of words.')
+  }
+  return {
+    ...s,
+    url: s.url.replace(/\/+$/, ''),
+    labels: Object.fromEntries(Object.entries(labels).map(([k, v]) => [k, toLabel(v)])),
+  }
+}
+
+/** Checks `detection`; throws with a readable reason. */
+export function detectionMode(value: unknown): Detection {
+  if (value === undefined) return 'list'
+  if (value === 'list' || value === 'ner' || value === 'both') return value
+  throw new Error(`detection must be "list", "ner" or "both", not ${JSON.stringify(value)}.`)
+}
+
+/**
+ * Words NER models tag as a company or a person that are Claude Code's own
+ * (its tools, the model, file formats): never masked, in any case.
+ */
+export const NER_ALWAYS_IGNORED = [
+  'Claude', 'Claude Code', 'Anthropic', 'Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Grep', 'Glob', 'LS',
+  'WebFetch', 'WebSearch', 'Agent', 'Task', 'TodoWrite', 'NotebookEdit', 'Skill', 'MCP', 'API', 'CLI', 'JSON',
+  'YAML', 'CSV', 'PDF', 'HTML', 'HTTP', 'HTTPS', 'URL', 'README', 'Git', 'GitHub', 'npm', 'Node',
+]
+
+/** One thing the NER model found: the text as written and the placeholder label it gets. */
+export type NerFind = { value: string; label: string }
+
+/** An entity as the NER server answers it. */
+export type NerEntity = { text: string; label: string; score?: number }
+
+/**
+ * Turns the server's entities into finds: mapped to placeholder labels, below
+ * the threshold or on the ignore list left out, and never a placeholder or a
+ * fragment of one.
+ */
+export function nerFinds(entities: readonly NerEntity[], s: NerSettings): NerFind[] {
+  const ignore = new Set(
+    [...NER_ALWAYS_IGNORED, ...LABEL_WORDS, ...Object.values(s.labels), ...s.ignore].map(w => exactKey(w)),
+  )
+  const out: NerFind[] = []
+  for (const e of entities) {
+    const label = s.labels[e.label]
+    const value = typeof e.text === 'string' ? e.text.trim().replace(/^[\s"'`([{]+|[\s"'`)\]},;:]+$/g, '') : ''
+    if (!label || value.replace(/[^\p{L}\p{N}]/gu, '').length < 2) continue
+    if (typeof e.score === 'number' && e.score < s.threshold) continue
+    if (ignore.has(exactKey(value)) || !looksLikeName(value)) continue
+    out.push({ value, label })
+  }
+  return out
+}
+
+/**
+ * Whether a find can be a name rather than code the model mistook for one:
+ * only letters, digits, spaces and . , & ' ’ / - (as in "Hansen & Søn A/S"),
+ * starting with a capital or a digit, and no word in camelCase or snake_case
+ * ("onMatch", "NerSettings", "RAW_FIELDS"). Placeholders are never names.
+ */
+export function looksLikeName(value: string): boolean {
+  if (!/^[\p{Lu}\p{N}]/u.test(value) || !/\p{L}/u.test(value)) return false
+  if (/[^\p{L}\p{M}\p{N} .,&'’/-]/u.test(value) || value.includes('&&')) return false
+  if (LEGAL_SUFFIXES.some(s => s.toLowerCase() === value.toLowerCase())) return false
+  return value.split(/[\s/-]+/).every(w => !/\p{Ll}\p{Lu}/u.test(w))
+}
+
+/** Placeholder labels: a model may tag them in text that explains placeholders. */
+const LABEL_WORDS = ['CUSTOMER', 'PERSON', 'EMAIL', 'PHONE', 'IBAN', 'CPR', 'DATA']
+
+/**
+ * Rules that mask values the NER model found, as written (any case, any run of
+ * whitespace, whole words), one rule per label. The finds of the text at hand
+ * and every value it found earlier this session (`vault.learned()`), so a
+ * name found once stays masked where the model misses it, or is not asked.
+ */
+export function nerRules(finds: readonly NerFind[], vault: Vault): Rule[] {
+  const byLabel = new Map<string, Set<string>>()
+  for (const f of [...vault.learned(), ...finds]) {
+    let set = byLabel.get(f.label)
+    if (!set) byLabel.set(f.label, (set = new Set()))
+    set.add(f.value)
+  }
+  return [...byLabel].map(([label, values]) => ({
+    label,
+    scan: nameScanner(values, false),
+    normalize: exactKey,
+    source: 'ner' as const,
+  }))
 }
 
 /** Content block kinds that carry pixels or a document, which text masking cannot see into. */
@@ -155,7 +303,8 @@ export function parseVaultFile(text: string): VaultFile {
       typeof e?.token !== 'string' ||
       typeof e.value !== 'string' ||
       typeof e.label !== 'string' ||
-      (e.hint !== undefined && typeof e.hint !== 'string')
+      (e.hint !== undefined && typeof e.hint !== 'string') ||
+      (e.source !== undefined && e.source !== 'ner')
     ) {
       throw new Error('a vault entry is malformed')
     }
@@ -199,6 +348,8 @@ export type Rule = {
   trim?: (match: string) => { value: string; rest: string }
   /** Hints by normalized value: shown once per customer, after its first placeholder. */
   hints?: ReadonlyMap<string, string>
+  /** Set on rules built from NER finds: their values are recorded as found by the model. */
+  source?: 'ner'
 }
 
 /**
@@ -304,7 +455,8 @@ export function buildRules(config: MaskConfig): Rule[] {
     })
   }
 
-  const customers: Customer[] = (config.customers ?? [])
+  // With detection "ner" the NER model finds the names, and the list is not used.
+  const customers: Customer[] = (config.detection === 'ner' ? [] : (config.customers ?? []))
     .map(c => (typeof c === 'string' ? { name: c } : c))
     .map(c => ({
       name: String(c.name ?? '').trim(),
@@ -623,7 +775,14 @@ export class Vault {
     return hint
   }
 
-  tokenFor(label: string, value: string, normalize: (v: string) => string, hint?: string): string {
+  /** Values the NER model found this session, as written. */
+  learned(): NerFind[] {
+    return this.entries()
+      .filter(e => e.source === 'ner')
+      .map(e => ({ value: e.value, label: e.label }))
+  }
+
+  tokenFor(label: string, value: string, normalize: (v: string) => string, hint?: string, source?: 'ner'): string {
     const formKey = `${label}\u0000${value}`
     const known = this.byForm.get(formKey)
     if (known !== undefined) return known
@@ -642,7 +801,13 @@ export class Vault {
     }
     this.byForm.set(formKey, token)
     const isFirstSpelling = !token.includes('-')
-    this.byToken.set(token, hint && isFirstSpelling ? { token, value, label, hint } : { token, value, label })
+    this.byToken.set(token, {
+      token,
+      value,
+      label,
+      ...(hint && isFirstSpelling && { hint }),
+      ...(source && { source }),
+    })
     return token
   }
 
@@ -672,7 +837,8 @@ export class Vault {
     for (const entry of entries) {
       if (this.byToken.has(entry.token)) continue
       const t = parseToken(entry.token)
-      const normalize = rules.find(r => r.label === entry.label)?.normalize ?? exact
+      const normalize =
+        entry.source === 'ner' ? exactKey : (rules.find(r => r.label === entry.label && !r.source)?.normalize ?? exact)
       this.byForm.set(`${entry.label}\u0000${entry.value}`, entry.token)
       const entityKey = `${entry.label}\u0000${normalize(entry.value)}`
       if (!this.byEntity.has(entityKey)) this.byEntity.set(entityKey, t.base)
@@ -706,7 +872,7 @@ export function mask(text: string, rules: readonly Rule[], vault: Vault, options
   for (const rule of rules) {
     const onMatch = (match: string) => {
       const { value, rest } = rule.trim ? rule.trim(match) : { value: match, rest: '' }
-      const token = vault.tokenFor(rule.label, value, rule.normalize, rule.hints?.get(rule.normalize(value)))
+      const token = vault.tokenFor(rule.label, value, rule.normalize, rule.hints?.get(rule.normalize(value)), rule.source)
       const hint = withHints ? vault.takeHint(token) : undefined
       return vault.format(token) + (hint ? ` [hint: ${hint}]` : '') + rest
     }

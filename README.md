@@ -64,6 +64,13 @@ claude --plugin-dir ./customer-mask
 
 Emails, phone numbers, IBANs and Danish CPR numbers are detected without any config. Full options are in [docs/configuration.md](docs/configuration.md).
 
+Optional: to also catch customers and people that aren't on the list, run the local NER server and set `"detection": "both"` ([how](docs/configuration.md#detection-list--ner--both)):
+
+```bash
+pip install spacy && python -m spacy download en_core_web_lg
+python3 tools/ner-server/server.py --backend spacy
+```
+
 > Never commit the real customer list. `.claude/customer-mask.json` is in this repo's `.gitignore`; add it to yours too.
 
 **3. Check it.** Start a session and type:
@@ -91,7 +98,7 @@ It shows the config it loaded and every value it has replaced so far. The status
 | Images and PDFs | ✅ removed before sending; Claude is told why (configurable) |
 | Spelling variants of listed customers (`Acme Freight`, `ACME FREIGHT ApS`, `acme-freight`, `acmefreightgroup.com`) | ✅ |
 | Other identifiers you list per customer: brands, addresses, websites ([aliases](docs/configuration.md#aliases)) | ✅ |
-| Customer names that are in neither your list nor a pattern | ❌ detection is list- and pattern-based |
+| Customer names that are in neither your list nor a pattern | 🟡 optional: a local NER model finds many of them ([`detection`](docs/configuration.md#detection-list--ner--both)); a name it misses goes through |
 | What the rest of the text gives away (a city, the goods, a product) | ❌ masking hides values, not context: Claude named 3–4 of 5 well-known customers from city and goods ([test](docs/open-questions.md#19-re-identification-from-context)) |
 
 If the mod itself fails, it fails closed. A broken config, an unreadable placeholder table or an unsupported Claude Code version **blocks** every request. Anything that can't be masked in time (a conversation row, a context block, part of the system prompt) is sent **with its text replaced by a note**, injected text is left out, and a tool call whose arguments can't be restored is denied. The ❌ rows above and the [open questions](docs/open-questions.md) are the known gaps.
@@ -106,7 +113,7 @@ If the mod itself fails, it fails closed. A broken config, an unreadable placeho
 
 ## Status
 
-Version 0.5, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.6, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
 
 ## License
 
