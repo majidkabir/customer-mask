@@ -8,3 +8,4 @@ node_modules/
 customer-mask.json
 # Re-identification test output (holds model answers)
 tools/reid-test/results-*.json
+__pycache__/
