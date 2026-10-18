@@ -623,7 +623,10 @@ export const register: Register = on => {
     const { sections } = await next(e)
     const own = sections.filter(s => s.scope === 'session').map(s => s.text)
     const extra = await nerExtra($, own, ner.scope === 'all')
-    const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text, undefined, extra) } : s))
+    // No hints here: the system prompt is rebuilt for every request, and a hint
+    // shown only on the first build would change it once and cost a full cache
+    // miss. The hint stays for the first conversation row that names the customer.
+    const masked = sections.map(s => (s.scope === 'session' ? { ...s, text: maskText(s.text, { hints: false }, extra) } : s))
     await persist($, before)
     return { sections: [...masked, { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const }] }
   }).catch(async ($, e, next) => {

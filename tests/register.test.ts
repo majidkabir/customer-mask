@@ -716,3 +716,21 @@ describe('NER failing closed', () => {
     expect(textOf(chunks)).toContain('detection must be "list", "ner" or "both"')
   })
 })
+
+describe('prompt cache: the system prompt stays the same', () => {
+  test('a customer in the system prompt gets no hint there, so every build is identical; the hint goes to the first row', async ($, on) => {
+    const config = JSON.stringify({ customers: [{ name: 'Acme Freight A/S', hint: 'Danish freight forwarder' }] })
+    world(on, {
+      files: { '/proj/.claude/customer-mask.json': config },
+      sections: [{ id: 'env', text: 'Branch: main; repo of Acme Freight A/S', scope: 'session' }],
+    })
+    const input = { model: 'claude', promptModel: 'claude', surfaces: [], tools: [], outputStyle: null, traits: [] }
+    const first = (await $.prompt.compose(input)).sections.find(s => s.id === 'env')?.text ?? ''
+    const second = (await $.prompt.compose(input)).sections.find(s => s.id === 'env')?.text ?? ''
+    expect(first).toBe(second)
+    expect(first).not.toContain('hint')
+    expect(first).not.toContain('Acme')
+    const stored = await appendPrompt($, 'Status for Acme Freight A/S?')
+    expect(JSON.stringify(stored.message?.content)).toContain('[hint: Danish freight forwarder]')
+  })
+})

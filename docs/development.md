@@ -72,7 +72,7 @@ The tests build placeholder strings at run time (`ph()`) rather than writing the
 
 ## What has been verified
 
-Besides the 107 automated tests (including `tests/scale.test.ts`, which fails if building the rules and masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model, with Claude Code 2.1.296 on Linux. The marker shown as `k3f9` is random in each run.
+Besides the 108 automated tests (including `tests/scale.test.ts`, which fails if building the rules and masking a 1 MB result with 50,000 customer names takes 5 s or more), the mod was run end to end against the real model, with Claude Code 2.1.296 on Linux. The marker shown as `k3f9` is random in each run.
 
 | Version | Check | Result |
 | --- | --- | --- |
