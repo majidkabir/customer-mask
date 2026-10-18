@@ -2,6 +2,10 @@
 
 A [Claude Code mod](https://claude.com/resources/articles/claude-code-mods) that keeps customer data out of what Claude sees.
 
+<a href="https://raw.githack.com/majidkabir/customer-mask/main/docs/presentation/index.html"><img src="docs/presentation/cover.gif" alt="The cover of the interactive walkthrough: real customer values pass a gate and come out as placeholders" width="100%"></a>
+
+**[Open the interactive walkthrough](https://raw.githack.com/majidkabir/customer-mask/main/docs/presentation/index.html)**: 13 hands-on pages on how it works, from the hooks to what it can't hide. Use the arrow keys to move between pages. Source: [`docs/presentation/index.html`](docs/presentation/index.html).
+
 Customer names, emails, phone numbers, IBANs, CPR numbers and your own IDs are replaced with placeholders such as `<<CUSTOMER_1>>` **before** anything is sent to the model. They are put back **after**: in the reply you read, and in the commands and file edits Claude makes (tools that send data off your machine, such as web search and MCP tools, keep the placeholders). Claude reasons about `<<CUSTOMER_1>>`. You and your tools see `Acme Freight A/S`.
 
 ```mermaid
@@ -105,6 +109,7 @@ If the mod itself fails, it fails closed. A broken config, an unreadable placeho
 
 ## Documentation
 
+- **[Interactive walkthrough](https://raw.githack.com/majidkabir/customer-mask/main/docs/presentation/index.html)**: a 13-page presentation with live demos, for showing the mod to a team
 - **[How it works](docs/how-it-works.md)**: diagrams of every data path, the placeholder vault, streaming, and fail-closed behaviour
 - **[Configuration](docs/configuration.md)**: all options, examples, keeping the customer list up to date
 - **[Team rollout](docs/team-rollout.md)**: run it for everyone with managed settings and one central customer list built from a CRM export

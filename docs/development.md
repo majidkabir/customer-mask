@@ -18,6 +18,7 @@ customer-mask/
 │   ├── register.test.ts     # hooks driven through the real Claude Code engine
 │   └── scale.test.ts        # timing with large customer lists and 1 MB inputs
 ├── docs/
+│   └── presentation/        # the interactive walkthrough (index.html) and the README's cover.gif
 ├── tools/
 │   ├── unmask.mjs           # restores real values in claude -p output, from the saved table
 │   ├── clean-transcripts.mjs # masks Claude Code's local copies in transcripts (large or older ones)

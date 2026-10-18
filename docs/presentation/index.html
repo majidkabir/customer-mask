@@ -1,0 +1,1177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>customer-mask Deck</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800;900&family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: a paged deck on a night-terminal stage; one page at a time, each with a hands-on centrepiece
+   and a technical side panel. Real values glow cargo amber, placeholders are signal blue, leaks are red. */
+:root {
+  --stage: #0b1220;
+  --deck: #111a2c;
+  --deck-2: #172238;
+  --rule: #24324d;
+  --text: #e9eef6;
+  --muted: #94a0b8;
+  --cargo: #f4a640;
+  --cargo-bg: #3a2914;
+  --signal: #93abff;
+  --signal-bg: #1d2752;
+  --leak: #ff6f61;
+  --leak-bg: #43201f;
+  --ok: #63d394;
+  --ok-bg: #173826;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--stage);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+h1, h2, h3 { margin: 0; text-wrap: balance; }
+p { margin: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: .88em; }
+
+/* the deck frame */
+.deck { position: fixed; inset: 0; }
+.page {
+  position: absolute; inset: 0;
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  overflow-y: auto; overflow-x: hidden;
+  opacity: 0; visibility: hidden; transform: translateX(48px);
+  transition: opacity .45s ease, transform .55s cubic-bezier(.2,.8,.2,1), visibility 0s linear .55s;
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,.018) 0 2px, transparent 2px 22px),
+    radial-gradient(1200px 600px at 85% -10%, rgba(147,171,255,.10), transparent 60%),
+    radial-gradient(900px 500px at -10% 110%, rgba(244,166,64,.08), transparent 60%),
+    var(--stage);
+}
+.page.before { transform: translateX(-48px); }
+.page.on { opacity: 1; visibility: visible; transform: none; transition: opacity .45s ease, transform .55s cubic-bezier(.2,.8,.2,1), visibility 0s; }
+@media (prefers-reduced-motion: reduce) { .page, .page.on { transition: none; transform: none; } }
+.inner { max-width: 1240px; min-height: 100%; margin: 0 auto; display: grid; gap: 22px; align-content: center; }
+.inner > * { min-width: 0; }
+
+.topbar {
+  position: fixed; z-index: 5; inset: 0 0 auto;
+  padding-top: calc(14px + env(safe-area-inset-top, 0px)); padding-bottom: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  background: linear-gradient(var(--stage), rgba(11,18,32,0));
+  pointer-events: none;
+}
+.brand { font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: .04em; text-transform: uppercase; }
+.brand span { color: var(--signal); }
+.topbar .where { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; text-align: right; }
+
+.bottombar {
+  position: fixed; z-index: 5; inset: auto 0 0;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); padding-top: 12px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 14px;
+  background: linear-gradient(rgba(11,18,32,0), var(--stage) 45%);
+}
+.segs { flex: 1; display: flex; gap: 4px; min-width: 0; }
+.segs button { flex: 1; height: 22px; border: 0; background: transparent; cursor: pointer; padding: 9px 0; }
+.segs button::after { content: ""; display: block; height: 4px; border-radius: 2px; background: var(--rule); transition: background .3s; }
+.segs button.done::after { background: color-mix(in srgb, var(--signal) 55%, var(--rule)); }
+.segs button[aria-current="page"]::after { background: var(--cargo); }
+.navbtn { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--rule); background: var(--deck); cursor: pointer; font-size: 20px; flex: none; }
+.navbtn:hover { border-color: var(--signal); }
+.navbtn:disabled { opacity: .35; cursor: default; }
+.pageno { font-family: var(--mono); font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+.keys { font-size: 12px; color: var(--muted); flex: none; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--deck); color: var(--text); }
+
+/* type */
+.kicker { font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--cargo); }
+.h-hero { font-family: var(--display); font-weight: 900; font-size: clamp(56px, 9.5vw, 136px); line-height: .86; letter-spacing: .005em; text-transform: uppercase; }
+.h-page { font-family: var(--display); font-weight: 800; font-size: clamp(38px, 5.4vw, 72px); line-height: .95; text-transform: uppercase; letter-spacing: .01em; }
+.lede { font-size: clamp(17px, 1.6vw, 20px); color: var(--muted); max-width: 60ch; }
+.muted { color: var(--muted); }
+.small { font-size: 13.5px; }
+.ph { font-family: var(--mono); font-size: .86em; background: var(--signal-bg); color: var(--signal); border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.real { background: var(--cargo-bg); color: var(--cargo); border-radius: 4px; padding: 0 4px; font-weight: 600; }
+.leak { background: var(--leak-bg); color: var(--leak); border-radius: 4px; padding: 0 4px; font-weight: 700; text-decoration: underline wavy; text-underline-offset: 3px; }
+.hint { color: var(--muted); font-style: italic; }
+
+/* building blocks */
+.split { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.split > * { min-width: 0; }
+.stage-box { background: var(--deck); border: 1px solid var(--rule); border-radius: 14px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.stage-box > * { min-width: 0; }
+.tech { background: var(--deck); border: 1px solid var(--rule); border-left: 3px solid var(--signal); border-radius: 10px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.tech > * { min-width: 0; }
+.tech h3 { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--signal); }
+.tech ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14.5px; }
+.tech p { font-size: 14.5px; }
+pre.code {
+  margin: 0; font-family: var(--mono); font-size: 12.8px; line-height: 1.6; background: var(--stage); border: 1px solid var(--rule);
+  border-radius: 8px; padding: 12px 14px; overflow-x: auto; white-space: pre; color: var(--text);
+}
+.code .k { color: var(--signal); } .code .s { color: var(--cargo); } .code .c { color: var(--muted); font-style: italic; } .code .g { color: var(--ok); }
+.label { font-family: var(--mono); font-size: 11.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--stage); }
+.seg button { border: 0; border-right: 1px solid var(--rule); background: transparent; padding: 8px 14px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--cargo); color: var(--stage); }
+.btn { border: 0; border-radius: 10px; padding: 10px 18px; background: var(--cargo); color: var(--stage); cursor: pointer; font-weight: 700; font-size: 15px; }
+.btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--rule); }
+.btn:disabled { opacity: .4; cursor: default; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.tag { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.tag.ok { color: var(--ok); } .tag.bad { color: var(--leak); } .tag.info { color: var(--signal); } .tag.amber { color: var(--cargo); }
+.box-out { background: var(--stage); border: 1px solid var(--rule); border-radius: 10px; padding: 12px 14px; font-family: var(--mono); font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; min-height: 3.4em; }
+textarea, input[type="text"] {
+  width: 100%; font-family: var(--mono); font-size: 13.5px; line-height: 1.55; color: var(--text);
+  background: var(--stage); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 12px; resize: vertical;
+}
+table.vt { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.vt th { text-align: left; font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--rule); }
+table.vt td { padding: 5px 6px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.scroll-x { overflow-x: auto; }
+
+/* page 1: conveyor */
+.cover { display: grid; gap: 26px; }
+.lane { position: relative; height: 180px; border-radius: 16px; overflow: hidden; border: 1px solid var(--rule);
+  background: repeating-linear-gradient(90deg, rgba(255,255,255,.035) 0 1px, transparent 1px 40px), var(--deck); }
+.lane .gate { position: absolute; top: 0; bottom: 0; left: 50%; width: 4px; margin-left: -2px; background: var(--signal); box-shadow: 0 0 24px 4px rgba(147,171,255,.55); }
+.lane .gate-label { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--signal); background: var(--deck); padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.lane .side { position: absolute; bottom: 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+.lane .side.l { left: 14px; } .lane .side.r { right: 14px; }
+.chip { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 14px; padding: 6px 12px; border-radius: 999px; white-space: nowrap; will-change: transform; }
+.chip.real { background: var(--cargo-bg); color: var(--cargo); border: 1px solid var(--cargo); font-weight: 600; }
+.chip.ph { background: var(--signal-bg); color: var(--signal); border: 1px solid var(--signal); font-size: 14px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.fact { font-family: var(--mono); font-size: 12.5px; color: var(--muted); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 12px; }
+
+/* page 2: x-ray */
+.req { font-family: var(--mono); font-size: 13px; line-height: 1.7; background: var(--stage); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; overflow-x: auto; white-space: pre; }
+.req .part { border-radius: 4px; transition: background .3s, box-shadow .3s; cursor: pointer; }
+.req .part.lit { background: rgba(147,171,255,.12); box-shadow: 0 0 0 1px var(--signal); }
+.req .cv { transition: all .3s; }
+.xray .req .cv { background: var(--leak-bg); color: var(--leak); border-radius: 3px; font-weight: 700; }
+.counter { font-family: var(--display); font-size: 64px; font-weight: 900; line-height: 1; color: var(--leak); font-variant-numeric: tabular-nums; }
+.srcs { display: grid; gap: 6px; }
+.srcs button { text-align: left; border: 1px solid var(--rule); background: var(--deck-2); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+.srcs button[aria-pressed="true"] { border-color: var(--signal); }
+
+/* page 3: chain */
+.chain { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; position: relative; }
+.link { background: var(--deck-2); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 12px; display: grid; gap: 4px; min-height: 92px; align-content: start; transition: border-color .3s, transform .3s; }
+.link b { font-size: 15px; }
+.link small { color: var(--muted); font-size: 12px; }
+.link.me { border-color: var(--cargo); background: var(--cargo-bg); }
+.link.hit { transform: translateY(-4px); border-color: var(--signal); }
+.link.stop { border-color: var(--leak); background: var(--leak-bg); }
+.link.skip { opacity: .35; }
+.puck { position: absolute; top: -14px; left: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 16px rgba(147,171,255,.8); transition: left .45s cubic-bezier(.2,.8,.2,1), background .3s; pointer-events: none; }
+.puck.bad { background: var(--leak); box-shadow: 0 0 16px rgba(255,111,97,.8); }
+.chain-out { border-left: 3px solid var(--cargo); background: var(--stage); padding: 10px 14px; border-radius: 0 10px 10px 0; font-size: 15px; }
+
+/* page 4: playground */
+.pg { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.pg > * { min-width: 0; display: grid; gap: 10px; align-content: start; }
+.rules { display: flex; flex-wrap: wrap; gap: 6px; }
+.rule { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); border-radius: 6px; padding: 4px 8px; color: var(--muted); transition: all .25s; }
+.rule.lit { border-color: var(--signal); color: var(--signal); background: var(--signal-bg); }
+.rule b { color: var(--text); margin-left: 4px; }
+
+/* page 5: round trip */
+.track { position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; padding-top: 30px; }
+.track::before { content: ""; position: absolute; left: 4%; right: 4%; top: 12px; height: 2px; background: var(--rule); }
+.track .line-cloud { position: absolute; top: 0; bottom: 0; border-left: 2px dashed var(--leak); opacity: .7; }
+.track .line-cloud span { position: absolute; top: -2px; left: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--leak); white-space: nowrap; letter-spacing: .08em; }
+.station { background: var(--deck-2); border: 1px solid var(--rule); border-radius: 12px; padding: 12px 10px; display: grid; gap: 4px; align-content: start; min-height: 112px; cursor: pointer; transition: border-color .3s, background .3s; text-align: left; }
+.station b { font-size: 14px; line-height: 1.2; }
+.station small { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+.station.cloud { background: color-mix(in srgb, var(--leak-bg) 55%, var(--deck-2)); }
+.station.past { border-color: color-mix(in srgb, var(--signal) 50%, var(--rule)); }
+.station.now { border-color: var(--cargo); box-shadow: 0 0 0 1px var(--cargo), 0 12px 30px -12px rgba(244,166,64,.5); }
+.truck { position: absolute; top: 4px; width: 18px; height: 18px; border-radius: 4px; background: var(--cargo); box-shadow: 0 0 14px rgba(244,166,64,.8); transition: left .6s cubic-bezier(.2,.8,.2,1); transform: translateX(-50%); }
+.payload { border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; }
+.payload + .payload { margin-top: 10px; }
+.payload header { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 7px 12px; background: var(--deck-2); font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.payload header b { color: var(--text); font-weight: 600; }
+.payload pre { margin: 0; padding: 12px 14px; font-family: var(--mono); font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; background: var(--stage); }
+
+/* page 6: stream */
+.lanes3 { display: grid; gap: 12px; }
+.lane3 { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lane3 > div:last-child { min-width: 0; }
+.chunk { font-family: var(--mono); font-size: 13.5px; border-radius: 6px; padding: 3px 7px; margin: 0 4px 4px 0; display: inline-block; background: var(--deck-2); border: 1px dashed var(--rule); animation: drop .35s ease; }
+.chunk.newest { border-color: var(--cargo); border-style: solid; }
+@keyframes drop { from { transform: translateY(-8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chunk { animation: none; } }
+.buffer { font-family: var(--mono); font-size: 14px; min-height: 2.2em; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--rule); background: var(--stage); color: var(--cargo); }
+.screen { font-size: 18px; min-height: 2.4em; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--cargo); background: var(--stage); }
+.screen .cursor { display: inline-block; width: 9px; height: 1.1em; background: var(--cargo); vertical-align: text-bottom; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* page 7: tools */
+.tools { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.tool { text-align: left; border: 1px solid var(--rule); border-radius: 12px; padding: 12px; background: var(--deck-2); cursor: pointer; display: grid; gap: 6px; transition: border-color .25s; min-width: 0; }
+.tool b { font-family: var(--mono); font-size: 13.5px; word-break: break-all; }
+.tool[aria-pressed="true"] { border-color: var(--cargo); box-shadow: 0 0 0 1px var(--cargo); }
+.check { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 14px; cursor: pointer; }
+.check code { word-break: break-all; }
+.check input { width: 18px; height: 18px; accent-color: var(--cargo); }
+
+/* page 8: anatomy */
+.ana { display: flex; flex-wrap: wrap; gap: 4px; font-family: var(--mono); font-weight: 700; font-size: clamp(30px, 6vw, 76px); }
+.ana button { border: 0; background: var(--signal-bg); color: var(--signal); border-radius: 8px; padding: 2px 10px; cursor: pointer; font: inherit; transition: transform .2s, background .2s; }
+.ana button:hover { transform: translateY(-3px); }
+.ana button[aria-pressed="true"] { background: var(--cargo); color: var(--stage); }
+.ana-out { font-size: 18px; min-height: 4.5em; max-width: 70ch; }
+.variants { display: grid; gap: 6px; }
+.variant { display: grid; grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1.1fr); gap: 8px; align-items: center; font-size: 14.5px; opacity: 0; transform: translateX(-10px); transition: opacity .35s, transform .35s; }
+.variant.in { opacity: 1; transform: none; }
+.variant .arrow { color: var(--muted); text-align: center; }
+
+/* page 9: detection */
+.sentence { font-size: clamp(20px, 2.4vw, 30px); line-height: 1.9; background: var(--deck); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 22px; }
+.sentence .ph { font-size: .62em; vertical-align: middle; }
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.card { background: var(--deck); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; display: grid; gap: 4px; min-width: 0; }
+.big { font-family: var(--display); font-weight: 900; font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--cargo); }
+.wire { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+
+/* page 10: break it */
+.lamp { display: inline-flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 14px; padding: 8px 14px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); }
+.lamp i { width: 12px; height: 12px; border-radius: 50%; background: currentColor; box-shadow: 0 0 12px currentColor; }
+.lamp.bad { background: var(--leak-bg); color: var(--leak); }
+.lamp.warn { background: var(--cargo-bg); color: var(--cargo); }
+.breakers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.breaker { text-align: left; border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; background: var(--deck-2); cursor: pointer; display: grid; gap: 4px; }
+.breaker[aria-pressed="true"] { border-color: var(--leak); background: var(--leak-bg); }
+.breaker small { color: var(--muted); }
+.term { font-family: var(--mono); font-size: 13.5px; line-height: 1.65; background: #070b14; border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; white-space: pre-wrap; word-break: break-word; min-height: 9.5em; }
+.term .p { color: var(--ok); } .term .e { color: var(--leak); } .term .m { color: var(--muted); }
+
+/* page 11: guess */
+.email { background: var(--deck); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 20px; font-size: 17px; line-height: 1.75; }
+.email .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.guess { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; background: var(--deck); border: 1px solid var(--rule); border-radius: 14px; padding: 16px 18px; }
+.meter { width: 130px; height: 130px; border-radius: 50%; display: grid; place-items: center; font-family: var(--display); font-weight: 900; font-size: 34px; position: relative; }
+.meter span { position: relative; text-align: center; line-height: 1; }
+.meter small { display: block; font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--muted); margin-top: 4px; letter-spacing: .06em; }
+.reveal-hide { filter: blur(10px); user-select: none; transition: filter .5s; }
+
+/* page 12 / 13 */
+.limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.limit { background: var(--deck); border: 1px solid var(--rule); border-radius: 12px; padding: 16px 18px; display: grid; gap: 6px; align-content: start; cursor: pointer; text-align: left; }
+.limit h3 { font-size: 18px; font-family: var(--body); font-weight: 700; }
+.limit .more { color: var(--muted); font-size: 14.5px; max-height: 0; overflow: hidden; transition: max-height .4s ease; }
+.limit[aria-expanded="true"] .more { max-height: 14em; }
+.limit[aria-expanded="true"] { border-color: var(--cargo); }
+.steps3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.stepcard { background: var(--deck); border: 1px solid var(--rule); border-radius: 12px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.stepcard .n { font-family: var(--display); font-weight: 900; font-size: 54px; line-height: .9; color: var(--cargo); }
+.copy { border: 1px solid var(--rule); background: var(--deck-2); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; justify-self: start; }
+
+@media (max-width: 960px) {
+  .split, .pg, .limits, .wire { grid-template-columns: minmax(0, 1fr); }
+  .chain { grid-template-columns: minmax(0, 1fr); }
+  .puck { display: none; }
+  .track { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .track::before, .truck, .track .line-cloud { display: none; }
+  .tools, .breakers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cards, .steps3 { grid-template-columns: minmax(0, 1fr); }
+  .lane3 { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .variant { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .variant .arrow { display: none; }
+  .ana { font-size: 26px; }
+  .keys { display: none; }
+  .inner { align-content: start; }
+}
+@media (max-width: 520px) {
+  .tools, .breakers { grid-template-columns: minmax(0, 1fr); }
+  .guess { grid-template-columns: minmax(0, 1fr); }
+  .lane { height: 240px; }
+}
+</style>
+
+<header class="topbar"><div class="brand">customer<span>-</span>mask</div><div class="where" id="where"></div></header>
+
+<main class="deck" id="deck">
+
+<!-- 1 -->
+<section class="page" data-title="Cover">
+  <div class="inner cover">
+    <div class="kicker">An open-source Claude Code mod</div>
+    <h1 class="h-hero">What Claude<br>sees</h1>
+    <p class="lede">Claude reads our files, our logs and our prompts. It doesn't need our customers' names to do the work. customer-mask swaps them out before anything leaves the laptop, and swaps them back in everything that comes home.</p>
+    <div class="lane" id="lane" aria-label="Animation: real values pass a gate and come out as placeholders">
+      <div class="gate"></div><div class="gate-label">CUSTOMER-MASK</div>
+      <div class="side l">on your laptop</div><div class="side r">what Claude reads</div>
+    </div>
+    <div class="row" style="justify-content:space-between">
+      <div class="facts"><span class="fact">TypeScript · runs inside Claude Code</span><span class="fact">hooks 11 Claude Code events</span><span class="fact">fails closed</span><span class="fact">v0.6 · MIT</span></div>
+      <button class="btn" data-go="next">Start →</button>
+    </div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section class="page" data-title="The problem">
+  <div class="inner">
+    <div class="kicker">01 · The problem</div>
+    <h2 class="h-page">Every turn, everything goes</h2>
+    <div class="split">
+      <div class="stage-box" id="xrayBox">
+        <div class="row" style="justify-content:space-between">
+          <span class="label">One request Claude Code sends, shortened</span>
+          <button class="btn" id="xrayBtn">X-ray it</button>
+        </div>
+        <div class="req" id="req"></div>
+      </div>
+      <div class="stage-box">
+        <div class="row" style="gap:16px"><span class="counter" id="cvCount">?</span><span class="muted">customer values in<br>a single request</span></div>
+        <div class="srcs" id="srcs"></div>
+        <div class="tech">
+          <h3>Under the hood</h3>
+          <p>The Messages API keeps no conversation on its side. So Claude Code sends the whole conversation again on every turn: your prompts, each <code>tool_result</code> (files, command output), <code>CLAUDE.md</code> and the system prompt.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section class="page" data-title="How a mod plugs in">
+  <div class="inner">
+    <div class="kicker">02 · How a mod plugs in</div>
+    <h2 class="h-page">A mod is a link in the chain</h2>
+    <p class="lede">Claude Code raises an event at each step of a turn. Every mod that hooks the event gets it in turn, and can pass it on, change it, refuse it or answer it.</p>
+    <div class="stage-box">
+      <div class="row" style="justify-content:space-between">
+        <div class="row"><span class="label">Event</span>
+          <div class="seg" id="evSeg" role="group" aria-label="Event">
+            <button data-v="tool.call" aria-pressed="true">tool.call</button>
+            <button data-v="session.append" aria-pressed="false">session.append</button>
+            <button data-v="turn.step" aria-pressed="false">turn.step</button>
+          </div></div>
+        <div class="row"><span class="label">The hook</span>
+          <div class="seg" id="actSeg" role="group" aria-label="What the hook does">
+            <button data-v="pass" aria-pressed="false">passes</button>
+            <button data-v="rewrite" aria-pressed="true">rewrites</button>
+            <button data-v="deny" aria-pressed="false">refuses</button>
+            <button data-v="answer" aria-pressed="false">answers</button>
+          </div></div>
+      </div>
+      <div class="chain" id="chain">
+        <div class="puck" id="puck"></div>
+        <div class="link"><b>Claude Code</b><small id="l0">raises the event</small></div>
+        <div class="link"><b>Built-in guard</b><small>sec-default, always first</small></div>
+        <div class="link me"><b>customer-mask</b><small>our hook</small></div>
+        <div class="link"><b>Other mods</b><small>if you have any</small></div>
+        <div class="link"><b id="l4t">The tool runs</b><small id="l4">Claude Code's own behaviour</small></div>
+      </div>
+      <div class="split" style="gap:14px">
+        <div style="display:grid;gap:8px"><span class="label">What arrives at the end</span><div class="box-out" id="chainResult"></div><p class="chain-out" id="chainWhy"></p></div>
+        <pre class="code" id="chainCode"></pre>
+      </div>
+    </div>
+    <div class="tech"><h3>The rules</h3><ul>
+      <li>A hook is <code>on(event, matcher?, ($, e, next) =&gt; …)</code>. <code>$</code> is Claude Code's API, <code>e</code> the event, <code>next</code> the rest of the chain.</li>
+      <li>A hook gets 10 s of running time. A hook that throws or runs over is skipped, and for a masking hook that would mean the text goes out unmasked. So every masking hook has a <code>.catch</code>.</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section class="page" data-title="Watch it mask">
+  <div class="inner">
+    <div class="kicker">03 · Watch it mask</div>
+    <h2 class="h-page">Type. See what Claude would get.</h2>
+    <div class="pg">
+      <div>
+        <span class="label">Your text (edit it)</span>
+        <textarea id="pgText" rows="6" aria-label="Your text"></textarea>
+        <div class="split" style="gap:10px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+          <div style="display:grid;gap:4px"><span class="label">Customer list</span><textarea id="pgCust" rows="3" aria-label="Customer list"></textarea></div>
+          <div style="display:grid;gap:4px"><span class="label">Your pattern: SHIPMENT</span><input type="text" id="pgPat" aria-label="Shipment pattern"></div>
+        </div>
+        <span class="label">Rules, in the order they run</span>
+        <div class="rules" id="pgRules"></div>
+      </div>
+      <div>
+        <span class="label">What Claude receives</span>
+        <div class="box-out" id="pgOut" aria-live="polite"></div>
+        <span class="label">Placeholder table (stays on your laptop)</span>
+        <div class="scroll-x"><table class="vt" id="pgVault"></table></div>
+        <p class="small muted">This page runs a simplified copy of the mod's list and pattern rules. Nothing is sent anywhere.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section class="page" data-title="One round trip" data-steps="trip">
+  <div class="inner">
+    <div class="kicker">04 · One round trip</div>
+    <h2 class="h-page">Follow one prompt there and back</h2>
+    <div class="stage-box">
+      <div class="track" id="track"><div class="truck" id="truck"></div></div>
+      <div class="row" style="justify-content:space-between">
+        <div><b id="tripTitle"></b> <span class="muted" id="tripText"></span></div>
+        <div class="row"><button class="btn ghost" id="tripBack">‹ Back</button><button class="btn" id="tripNext">Next hop ›</button></div>
+      </div>
+      <div id="tripPayload"></div>
+    </div>
+    <div class="tech"><h3>Hook at this hop</h3><p id="tripTech"></p></div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="page" data-title="Streaming" data-steps="stream">
+  <div class="inner">
+    <div class="kicker">05 · Unmasking a stream</div>
+    <h2 class="h-page">Replies arrive in pieces</h2>
+    <p class="lede">The model streams its answer a few characters at a time. A placeholder can be cut in half between two pieces. Press <b>Next piece</b> and watch the mod hold back the half until it is complete.</p>
+    <div class="stage-box">
+      <div class="lanes3">
+        <div class="lane3"><span class="label">From the API</span><div id="stIn"></div></div>
+        <div class="lane3"><span class="label">Held back</span><div class="buffer" id="stBuf"></div></div>
+        <div class="lane3"><span class="label">Your screen</span><div class="screen" id="stOut"></div></div>
+      </div>
+      <div class="row"><button class="btn" id="stNext">Next piece</button><button class="btn ghost" id="stAuto">Play all</button><button class="btn ghost" id="stReset">Reset</button><span class="small muted" id="stInfo"></span></div>
+    </div>
+    <div class="split">
+      <div class="tech"><h3>StreamUnmasker, in hooks/masker.ts</h3>
+<pre class="code"><span class="k">function</span> holdFrom(buf) {
+  <span class="k">const</span> i = buf.lastIndexOf(<span class="s">'&lt;&lt;'</span>)
+  <span class="c">// a tail that could still become a placeholder waits</span>
+  <span class="k">if</span> (i &gt;= 0 &amp;&amp; buf.length - i &lt;= 80 &amp;&amp; PARTIAL.test(buf.slice(i))) <span class="k">return</span> i
+  <span class="k">if</span> (buf.endsWith(<span class="s">'&lt;'</span>)) <span class="k">return</span> buf.length - 1
+  <span class="k">return</span> buf.length
+}</pre></div>
+      <div class="tech"><h3>Why it matters</h3><p>Without the hold-back, you would see a raw placeholder flash on screen, and a placeholder cut in two would never be restored. The hook is <code>turn.step</code>, an async generator: it yields each piece of the stream to the screen after unmasking it.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="page" data-title="Tools">
+  <div class="inner">
+    <div class="kicker">06 · Tool calls</div>
+    <h2 class="h-page">Real values for local tools. Placeholders for the internet.</h2>
+    <div class="stage-box">
+      <span class="label">Claude asks for one of these. Pick one.</span>
+      <div class="tools" id="tools"></div>
+      <div class="split" style="gap:12px;grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+        <div style="display:grid;gap:6px"><span class="label">Claude wrote</span><div class="box-out" id="toolIn"></div></div>
+        <div style="display:grid;gap:6px"><span class="label" id="toolOutLabel">The tool receives</span><div class="box-out" id="toolOut"></div></div>
+      </div>
+      <p id="toolWhy"></p>
+      <label class="check"><input type="checkbox" id="localDb"> Add <code>mcp__local_db__*</code> to <code>unmaskedTools</code> (a database server on this machine)</label>
+    </div>
+    <div class="split">
+      <div class="tech"><h3>The config</h3>
+<pre class="code" id="toolCfg"></pre></div>
+      <div class="tech"><h3>Worth knowing</h3><ul>
+        <li>Restoring happens in <code>tool.call</code>, before the permission prompt, so you approve the real command.</li>
+        <li>Bash gets real values. A command that sends data somewhere itself, like <code>curl</code> to an outside API, sends the real values too.</li>
+        <li>An MCP server can forward what it gets anywhere, so every MCP tool keeps placeholders unless you list it.</li>
+      </ul></div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="page" data-title="Placeholders">
+  <div class="inner">
+    <div class="kicker">07 · Anatomy of a placeholder</div>
+    <h2 class="h-page">Six parts, six jobs</h2>
+    <div class="ana" id="ana" role="group" aria-label="Parts of a placeholder"></div>
+    <p class="ana-out" id="anaOut"></p>
+    <div class="stage-box">
+      <div class="row" style="justify-content:space-between"><span class="label">One customer, every spelling: each gets its own token, restored exactly as written</span><button class="btn ghost" id="varPlay">Replay</button></div>
+      <div class="variants" id="variants"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="page" data-title="Finding names">
+  <div class="inner">
+    <div class="kicker">08 · Finding the names · new in 0.6</div>
+    <h2 class="h-page">A list is exact. A local model catches the rest.</h2>
+    <div class="row"><span class="label">detection</span>
+      <div class="seg" id="detSeg" role="group" aria-label="Detection mode">
+        <button data-v="list" aria-pressed="false">"list"</button>
+        <button data-v="ner" aria-pressed="false">"ner"</button>
+        <button data-v="both" aria-pressed="true">"both"</button>
+      </div></div>
+    <div class="sentence" id="detSentence"></div>
+    <div class="cards" id="detCards"></div>
+    <div class="split">
+      <div class="tech"><h3 id="wireTitle">The call to the NER server, on localhost</h3>
+        <div class="wire" id="wire"></div></div>
+      <div class="tech"><h3>What NER is</h3><p>Named entity recognition: a small model trained to find companies, people and places in text. It runs on your machine (spaCy or GLiNER) in <code>tools/ner-server</code>. A name it finds once stays masked for the rest of the session. If the server doesn't answer, the session is blocked.</p>
+      <p class="small muted">Measured with spaCy <code>en_core_web_lg</code> on a 2-core cloud VM, no GPU.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="page" data-title="Break it">
+  <div class="inner">
+    <div class="kicker">09 · Failing closed</div>
+    <h2 class="h-page">Go on, break it</h2>
+    <p class="lede">A masking layer that fails open is worse than none: it looks safe. Pick something to break and watch where the data goes.</p>
+    <div class="split">
+      <div class="stage-box">
+        <div class="row" style="justify-content:space-between"><span class="label">Session status</span><span class="lamp" id="lamp"><i></i><span id="lampText">customer-mask on</span></span></div>
+        <div class="breakers" id="breakers"></div>
+        <div class="term" id="term" aria-live="polite"></div>
+      </div>
+      <div class="tech"><h3>The pattern behind every row</h3>
+<pre class="code"><span class="k">on</span>(<span class="s">'session.append'</span>, <span class="k">async</span> ($, e, next) =&gt; {
+  <span class="k">const</span> extra = <span class="k">await</span> nerExtra($, …)  <span class="c">// may time out</span>
+  <span class="k">const</span> content = maskContent(e.message.content, extra)
+  <span class="k">return</span> next({ ...e, message: { ...e.message, content } })
+}).<span class="k">catch</span>(($, e, next) =&gt;
+  <span class="c">// failed: store and send a note, never the original</span>
+  next({ ...e, message: { ...e.message,
+    content: redactContent(e.message.content) } }))</pre>
+        <p class="small muted"><code>claude plugin validate</code> lists every gating hook and whether it has a <code>.catch</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="page" data-title="Can Claude still guess?">
+  <div class="inner">
+    <div class="kicker">10 · The part masking can't fix</div>
+    <h2 class="h-page">Can Claude still guess who it is?</h2>
+    <div class="split">
+      <div class="stage-box">
+        <div class="row"><span class="label">What Claude is told about the customer</span>
+          <div class="seg" id="guessSeg" role="group" aria-label="How much context">
+            <button data-v="ctx" aria-pressed="true">context only</button>
+            <button data-v="vague" aria-pressed="false">vague hint</button>
+            <button data-v="sharp" aria-pressed="false">specific hint</button>
+          </div></div>
+        <div class="email" id="guessEmail"></div>
+        <div class="row"><span class="small muted">Who is it? Guess first, then</span><button class="btn" id="guessReveal">Reveal Claude's answer</button></div>
+        <div class="guess" id="guessBox">
+          <div class="meter" id="meter"><span id="meterTxt"></span></div>
+          <div class="reveal-hide" id="guessText"></div>
+        </div>
+      </div>
+      <div class="tech"><h3>The test, in tools/reid-test</h3>
+        <ul>
+          <li>Haiku and Sonnet were shown masked texts about 5 well-known customers and asked who is behind each placeholder, with a confidence.</li>
+          <li>From context alone (the city, the goods, the products), they named 3 to 4 of the 5.</li>
+          <li>Masking brands and addresses as aliases lowered their confidence but didn't stop them: "a distribution centre in Jiaxing" was enough.</li>
+          <li>Small, ordinary customers leave little to guess from. That is most of our data.</li>
+        </ul>
+        <p class="small muted">The texts on the left are written in the style of the test cases. The numbers are the test's.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="page" data-title="Limits">
+  <div class="inner">
+    <div class="kicker">11 · What it doesn't solve</div>
+    <h2 class="h-page">Known gaps, in the open</h2>
+    <p class="lede">Click a card for the details. All of these are tracked in the repository's open questions.</p>
+    <div class="limits" id="limits"></div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="page" data-title="Get it">
+  <div class="inner">
+    <div class="kicker">12 · Get it</div>
+    <h2 class="h-page">Running in three steps</h2>
+    <div class="steps3">
+      <div class="stepcard"><span class="n">1</span><b>Install</b><span class="small muted">Claude Code 2.1.296 or newer</span>
+        <pre class="code" id="g1">/plugin install customer-mask \
+  --marketplace majidkabir/customer-mask</pre><button class="copy" data-copy="g1">Copy</button></div>
+      <div class="stepcard"><span class="n">2</span><b>Tell it your customers</b><span class="small muted">.claude/customer-mask.json</span>
+        <pre class="code" id="g2">{
+  "customers": [{
+    "name": "Acme Freight A/S",
+    "hint": "Danish freight forwarder"
+  }],
+  "patterns": [{ "label": "SHIPMENT",
+    "regex": "\\bSHP\\d{8}\\b" }],
+  "detection": "both"
+}</pre><button class="copy" data-copy="g2">Copy</button></div>
+      <div class="stepcard"><span class="n">3</span><b>Optional: NER, then check</b><span class="small muted">type /customer-mask in a session</span>
+        <pre class="code" id="g3">pip install spacy
+python -m spacy download en_core_web_lg
+python3 tools/ner-server/server.py \
+  --backend spacy</pre><button class="copy" data-copy="g3">Copy</button></div>
+    </div>
+    <div class="tech"><h3>For the whole team</h3><p>Managed settings install it on every machine from an admin-only folder, load it before any mod a user adds, and point every session at one customer list that a scheduled job builds from the CRM export (<code>tools/build-customer-list.mjs</code>). Docs, tests and open questions: <a href="https://github.com/majidkabir/customer-mask" style="color:var(--signal)">github.com/majidkabir/customer-mask</a></p></div>
+  </div>
+</section>
+
+</main>
+
+<footer class="bottombar">
+  <button class="navbtn" id="prev" aria-label="Previous page">‹</button>
+  <div class="segs" id="segs" aria-label="Pages"></div>
+  <span class="pageno" id="pageno"></span>
+  <span class="keys"><kbd>←</kbd> <kbd>→</kbd></span>
+  <button class="navbtn" id="next" aria-label="Next page">›</button>
+</footer>
+
+<script>
+(() => {
+'use strict'
+const $ = id => document.getElementById(id)
+const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const M = 'k3f9'
+const ph = (label, n) => '<' + '<' + label + '_' + n + '.' + M + '>' + '>'
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+function setSeg(seg, v) { for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.v === v)) }
+
+const REAL = { cust: 'Acme Freight A/S', ship: 'SHP12345678', mail: 'ops@acmefreight.dk', person: 'Lars Holm', cust2: 'Nordlys Trading', ship2: 'SHP87654321', mail2: 'info@nordlys.dk' }
+const REALS = Object.values(REAL).sort((a, b) => b.length - a.length)
+const PH_ESC = new RegExp('&lt;&lt;([A-Z][A-Z0-9_]*_\\d+(?:-\\d+)?)\\.' + M + '&gt;&gt;', 'g')
+/** Escaped text with placeholders, hints and real values marked; real values turn red when `cloud`. */
+function hl(text, cloud) {
+  let h = esc(text).replace(PH_ESC, m => '<span class="ph">' + m + '</span>').replace(/\[hint: [^\]]+\]/g, m => '<span class="hint">' + m + '</span>')
+  for (const v of REALS) h = h.split(esc(v)).join('<mark class="' + (cloud ? 'leak' : 'real') + '">' + esc(v) + '</mark>')
+  return h
+}
+const leaksIn = t => REALS.filter(v => t.includes(v))
+
+/* ================= Deck ================= */
+const pages = [...document.querySelectorAll('.page')]
+let at = 0
+const hooks = {}   // per-page enter callbacks
+const steppers = {} // pages whose own steps take the arrow keys first
+$('segs').innerHTML = pages.map((p, i) => `<button aria-label="Page ${i + 1}: ${esc(p.dataset.title)}"></button>`).join('')
+const segBtns = [...$('segs').children]
+segBtns.forEach((b, i) => b.addEventListener('click', () => show(i)))
+function show(i) {
+  i = Math.max(0, Math.min(pages.length - 1, i))
+  pages.forEach((p, j) => { p.classList.toggle('on', j === i); p.classList.toggle('before', j < i); p.setAttribute('aria-hidden', String(j !== i)); p.inert = j !== i })
+  segBtns.forEach((b, j) => { b.classList.toggle('done', j < i); if (j === i) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current') })
+  at = i
+  $('pageno').textContent = String(i + 1).padStart(2, '0') + ' / ' + pages.length
+  $('where').textContent = pages[i].dataset.title
+  $('prev').disabled = i === 0; $('next').disabled = i === pages.length - 1
+  pages[i].scrollTop = 0
+  try { history.replaceState(null, '', '#p' + (i + 1)) } catch (_) { /* the frame may refuse it */ }
+  const h = hooks[i]; if (h) h()
+}
+$('prev').addEventListener('click', () => show(at - 1))
+$('next').addEventListener('click', () => show(at + 1))
+document.addEventListener('click', e => { const g = e.target.closest('[data-go="next"]'); if (g) show(at + 1) })
+document.addEventListener('keydown', e => {
+  if (e.target.closest('textarea, input')) return
+  const fwd = ['ArrowRight', 'PageDown'].includes(e.key) || (e.key === ' ' && !e.shiftKey)
+  const back = ['ArrowLeft', 'PageUp'].includes(e.key) || (e.key === ' ' && e.shiftKey)
+  if (!fwd && !back) return
+  e.preventDefault()
+  const s = steppers[pages[at].dataset.steps]
+  if (s && (fwd ? s.forward() : s.back())) return
+  show(at + (fwd ? 1 : -1))
+})
+let touchX = null
+document.addEventListener('touchstart', e => { touchX = e.touches[0].clientX }, { passive: true })
+document.addEventListener('touchend', e => {
+  if (touchX === null || e.target.closest('textarea, input, .scroll-x, pre, .req')) { touchX = null; return }
+  const dx = e.changedTouches[0].clientX - touchX; touchX = null
+  if (Math.abs(dx) > 70) show(at + (dx < 0 ? 1 : -1))
+})
+
+/* ================= 1. Conveyor ================= */
+;(function conveyor() {
+  const lane = $('lane')
+  const items = [
+    [REAL.cust, ph('CUSTOMER', 1)], [REAL.ship, ph('SHIPMENT', 1)], [REAL.mail, ph('EMAIL', 1)], [REAL.person, ph('PERSON', 1)],
+    ['DK50 0040 0440 1162 43', ph('IBAN', 1)], [REAL.cust2, ph('CUSTOMER', 2)], ['+45 12 34 56 78', ph('PHONE', 1)], ['ACME FREIGHT', ph('CUSTOMER', '1-2')],
+  ]
+  const chips = items.map(([r, p], i) => {
+    const el = document.createElement('div'); el.className = 'chip real'; el.textContent = r
+    lane.appendChild(el)
+    return { el, r, p, x: 40 - i * 230, y: 30 + (i % 3) * 44, masked: false }
+  })
+  let last = performance.now()
+  function frame(now) {
+    const dt = Math.min(50, now - last); last = now
+    const w = lane.clientWidth, gate = w / 2
+    if (pages[0].classList.contains('on')) {
+      for (const c of chips) {
+        c.x += dt * 0.09
+        const mid = c.x + c.el.offsetWidth / 2
+        if (!c.masked && mid >= gate) { c.masked = true; c.el.className = 'chip ph'; c.el.textContent = c.p }
+        if (c.x > w + 40) {
+          const minX = Math.min(...chips.map(o => o.x))
+          c.x = Math.min(-260, minX - 230); c.masked = false; c.el.className = 'chip real'; c.el.textContent = c.r
+        }
+        c.el.style.transform = `translate(${c.x}px, ${c.y}px)`
+      }
+    }
+    requestAnimationFrame(frame)
+  }
+  if (reduced) {
+    chips.forEach((c, i) => { const left = i % 2 === 0; c.masked = !left; c.el.className = left ? 'chip real' : 'chip ph'; c.el.textContent = left ? c.r : c.p
+      c.el.style.transform = `translate(${left ? 20 + (i % 4) * 30 : lane.clientWidth / 2 + 30 + (i % 4) * 20}px, ${c.y}px)` })
+  } else requestAnimationFrame(frame)
+})()
+
+/* ================= 2. X-ray ================= */
+const REQ = [
+  ['sys', 'system', `"system": "… working directory: /home/you/ops-tools\n  git branch: fix/`, ['acme-freight'], `-eta …",`],
+  ['ctx', 'context', `"messages": [\n  { "role": "user", "content": "<CLAUDE.md> Our biggest account is `, [REAL.cust], `. </CLAUDE.md>\n    Why is `, [REAL.ship], ` late? Ask `, [REAL.person], ` if needed." },`],
+  ['tool', 'file read', `\n  { "role": "user", "content": [{ "type": "tool_result", "content":\n    "customer,shipment,contact\\n`, [REAL.cust], `,`, [REAL.ship], `,`, [REAL.mail], `" }] },`],
+  ['cmd', 'command output', `\n  { "role": "user", "content": [{ "type": "tool_result", "content":\n    "ERROR booking for `, [REAL.cust2], ` (`, [REAL.mail2], `) failed" }] }\n]`],
+]
+const SRC_TEXT = { sys: 'System prompt: branch and folder names', ctx: 'Your prompt and CLAUDE.md', tool: 'A file Claude read', cmd: 'Command output' }
+$('req').innerHTML = '<span class="mono">POST /v1/messages</span>\n{\n  ' + REQ.map(([id, , ...parts]) => {
+  const inner = parts.map(p => Array.isArray(p) ? `<span class="cv">${esc(p[0])}</span>` : esc(p)).join('')
+  return `<span class="part" data-id="${id}">${inner}</span>`
+}).join('\n  ') + '\n}'
+const cvTotal = $('req').querySelectorAll('.cv').length
+$('srcs').innerHTML = REQ.map(([id]) => {
+  const n = $('req').querySelectorAll(`.part[data-id="${id}"] .cv`).length
+  return `<button data-id="${id}" aria-pressed="false"><span>${esc(SRC_TEXT[id])}</span><span class="tag bad">${n}</span></button>`
+}).join('')
+function lightSrc(id) {
+  for (const p of $('req').querySelectorAll('.part')) p.classList.toggle('lit', p.dataset.id === id)
+  for (const b of $('srcs').querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.id === id))
+}
+$('srcs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) lightSrc(b.dataset.id) })
+$('req').addEventListener('click', e => { const p = e.target.closest('.part'); if (p) lightSrc(p.dataset.id) })
+let xray = false
+$('xrayBtn').addEventListener('click', async () => {
+  xray = !xray
+  $('xrayBox').classList.toggle('xray', xray)
+  $('xrayBtn').textContent = xray ? 'Hide' : 'X-ray it'
+  if (!xray) { $('cvCount').textContent = '?'; return }
+  for (let n = 0; n <= cvTotal; n++) { $('cvCount').textContent = n; if (!reduced) await sleep(70) }
+})
+hooks[1] = () => { xray = false; $('xrayBox').classList.remove('xray'); $('xrayBtn').textContent = 'X-ray it'; $('cvCount').textContent = '?'; lightSrc(null) }
+
+/* ================= 3. Chain ================= */
+const EV = {
+  'tool.call': {
+    input: `Bash: echo "${ph('CUSTOMER', 1)} / ${ph('SHIPMENT', 1)}" > out.txt`,
+    l0: 'raises tool.call', l4t: 'Bash runs', l4: 'the tool itself',
+    pass: [`echo "${ph('CUSTOMER', 1)} / ${ph('SHIPMENT', 1)}" > out.txt`, 'The call goes on unchanged, and Bash writes the placeholders into the file.'],
+    rewrite: [`echo "${REAL.cust} / ${REAL.ship}" > out.txt`, 'customer-mask restores the real values, so the file gets the real customer. This is what it does for every local tool.'],
+    deny: ['(the tool never runs)', 'Claude gets the reason instead. customer-mask does this when it can\'t restore the arguments, so a command never runs half-restored.'],
+    answer: ['{ result: … } from the hook', 'The hook answers in place of the tool. A mod could serve a cached result, for example.'],
+    code: `<span class="k">on</span>(<span class="s">'tool.call'</span>, <span class="k">async</span> ($, e, next) =&gt;
+  next(keepsPlaceholders(e.tool) ? e : unmaskDeep(e, vault)),
+).<span class="k">catch</span>(() =&gt;
+  ({ deny: <span class="s">'could not restore the customer data; retry'</span> }))`,
+  },
+  'session.append': {
+    input: `user: "Why is ${REAL.ship} for ${REAL.cust} late?"`,
+    l0: 'raises session.append', l4t: 'Row is stored', l4: 'and sent with every request',
+    pass: [`"Why is ${REAL.ship} for ${REAL.cust} late?"`, 'Stored and sent as typed. This is Claude Code without the mod.'],
+    rewrite: [`"Why is ${ph('SHIPMENT', 1)} for ${ph('CUSTOMER', 1)} late?"`, 'customer-mask masks the row. What it returns is what goes into the transcript and into every later request.'],
+    deny: ['(the row is refused)', 'The row is not stored. customer-mask never refuses rows: if it can\'t mask one, it stores a note in its place.'],
+    answer: ['{ note in place of the text }', 'customer-mask\'s .catch does this when masking fails: the row keeps its place, its text becomes a note.'],
+    code: `<span class="k">on</span>(<span class="s">'session.append'</span>, <span class="k">async</span> ($, e, next) =&gt; {
+  <span class="k">const</span> content = maskContent(e.message.content, extra)
+  <span class="k">return</span> next({ ...e, message: { ...e.message, content } })
+})`,
+  },
+  'turn.step': {
+    input: `the model streams: "${ph('CUSTOMER', 1)} is held at the hub"`,
+    l0: 'raises turn.step', l4t: 'The model is called', l4: 'and its reply streams',
+    pass: [`${ph('CUSTOMER', 1)} is held at the hub`, 'You would read the placeholder on screen.'],
+    rewrite: [`${REAL.cust} is held at the hub`, 'customer-mask unmasks each piece of the stream for your screen.'],
+    deny: ['(the model is not called)', 'Nothing is sent. customer-mask doesn\'t refuse silently: when it must stop a request, it answers with the reason instead.'],
+    answer: ['customer-mask stopped this request so customer data could not leak: …', 'When the session is blocked (broken config, NER server down), customer-mask answers every request itself. Nothing is sent.'],
+    code: `<span class="k">on</span>(<span class="s">'turn.step'</span>, <span class="k">async function*</span> ($, e, next) {
+  <span class="k">if</span> (blocked()) { <span class="k">yield</span> { kind: <span class="s">'text'</span>, text: reason }; <span class="k">return</span> … }
+  <span class="k">const</span> u = <span class="k">new</span> StreamUnmasker(vault)
+  <span class="k">for await</span> (<span class="k">const</span> c <span class="k">of</span> next(e)) <span class="k">yield</span> { ...c, text: u.push(c.text) }
+})`,
+  },
+}
+let ev = 'tool.call', act = 'rewrite', chainRun = 0
+async function runChain() {
+  const run = ++chainRun
+  const d = EV[ev]
+  $('l0').textContent = d.l0; $('l4t').textContent = d.l4t; $('l4').textContent = d.l4
+  $('chainCode').innerHTML = d.code
+  const links = [...$('chain').querySelectorAll('.link')]
+  links.forEach(l => l.classList.remove('hit', 'stop', 'skip'))
+  $('chainResult').innerHTML = '<span class="muted">…</span>'; $('chainWhy').textContent = ''
+  const puck = $('puck'); puck.classList.remove('bad')
+  const stopAt = act === 'deny' || act === 'answer' ? 2 : 4
+  for (let i = 0; i <= stopAt; i++) {
+    if (run !== chainRun) return
+    const l = links[i]
+    puck.style.left = (l.offsetLeft + l.offsetWidth / 2 - 13) + 'px'
+    l.classList.add('hit')
+    if (i === 2 && stopAt === 2) { l.classList.add('stop'); puck.classList.toggle('bad', act === 'deny'); links.slice(3).forEach(x => x.classList.add('skip')) }
+    if (!reduced) await sleep(420)
+  }
+  if (run !== chainRun) return
+  const [res, why] = d[act]
+  $('chainResult').innerHTML = res.startsWith('(') ? `<span class="muted">${esc(res)}</span>` : hl(res)
+  $('chainWhy').textContent = why
+}
+$('evSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; ev = b.dataset.v; setSeg($('evSeg'), ev); runChain() })
+$('actSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; act = b.dataset.v; setSeg($('actSeg'), act); runChain() })
+hooks[2] = () => setTimeout(runChain, 350)
+
+/* ================= 4. Playground ================= */
+const SUFFIXES = ['GmbH & Co. KG', 'Corporation', 'Limited', 'Pty Ltd', 'GmbH', 'A/S', 'ApS', 'I/S', 'K/S', 'P/S', 'IVS', 'ASA', 'Oyj', 'LLC', 'PLC', 'Inc.', 'Inc', 'Ltd.', 'Ltd', 'Corp.', 'Corp', 'S.A.', 'SAS', 'B.V.', 'N.V.', 'AB', 'AG', 'SE', 'Oy']
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const SUF_ALT = SUFFIXES.map(s => reEsc(s).replace(/ /g, '\\s*')).join('|')
+const SUF_END = new RegExp('^(.*?)[\\s,]+(?:' + SUF_ALT + ')$', 'iu')
+const core = n => (SUF_END.exec(n.trim()) || [null, n.trim()])[1]
+const PG_PH = new RegExp('<<([A-Z][A-Z0-9_]*_\\d+(?:-\\d+)?)\\.' + M + '>>', 'g')
+class PgVault {
+  constructor() { this.byForm = new Map(); this.byEntity = new Map(); this.count = new Map(); this.variants = new Map(); this.rows = [] }
+  token(label, value, key) {
+    const fk = label + '\0' + value
+    if (this.byForm.has(fk)) return this.byForm.get(fk)
+    const ek = label + '\0' + key
+    let t = this.byEntity.get(ek)
+    if (!t) { const n = (this.count.get(label) || 0) + 1; this.count.set(label, n); t = label + '_' + n; this.byEntity.set(ek, t) }
+    else { const k = (this.variants.get(t) || 1) + 1; this.variants.set(t, k); t = t + '-' + k }
+    this.byForm.set(fk, t); this.rows.push({ token: t, value, label })
+    return t
+  }
+}
+const tokenText = t => { const label = t.replace(/_\d+(?:-\d+)?$/, ''); return ph(label, t.slice(label.length + 1)) }
+function outside(text, fn) {
+  let out = '', last = 0
+  for (const m of text.matchAll(PG_PH)) { out += fn(text.slice(last, m.index)) + m[0]; last = m.index + m[0].length }
+  return out + fn(text.slice(last))
+}
+function pgRules(customers, pattern) {
+  const rules = [
+    { name: 'EMAIL', label: 'EMAIL', re: /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, key: v => v.toLowerCase() },
+    { name: 'IBAN', label: 'IBAN', re: /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/g, key: v => v.replace(/\s/g, '') },
+    { name: 'CPR', label: 'CPR', re: /\b(?:0[1-9]|[12]\d|3[01])(?:0[1-9]|1[0-2])\d{2}-\d{4}\b/g, key: v => v },
+  ]
+  let patternOk = true
+  try { rules.push({ name: 'SHIPMENT (yours)', label: 'SHIPMENT', re: new RegExp(pattern || '(?!)', 'g'), key: v => v }) } catch (_) { patternOk = false; rules.push({ name: 'SHIPMENT (yours)', label: 'SHIPMENT', re: /(?!)/g, key: v => v }) }
+  const cores = customers.map(core).filter(c => c.replace(/[^\p{L}\p{N}]/gu, '').length >= 3)
+  const alts = cores.sort((a, b) => b.length - a.length).map(c => c.split(/[\s\-._]+/).filter(Boolean).map(reEsc).join('[\\s\\-._]*'))
+  rules.push({ name: 'CUSTOMER (list)', label: 'CUSTOMER', re: alts.length ? new RegExp('(?<![\\p{L}\\p{N}])(?:' + alts.join('|') + ')(?:[\\s,]+(?:' + SUF_ALT + '))?(?![\\p{L}\\p{N}])', 'giu') : /(?!)/g, key: v => core(v).toLowerCase().replace(/[\s\-._,]+/g, '') })
+  rules.push({ name: 'PHONE', label: 'PHONE', re: /(?<![\w+])\+\d{1,3}(?:[ .-]?\d){6,12}(?!\d)|\b\d{2} \d{2} \d{2} \d{2}\b/g, key: v => v.replace(/[\s.-]/g, '') })
+  return { rules, patternOk }
+}
+function pgRun() {
+  const { rules, patternOk } = pgRules($('pgCust').value.split('\n').map(s => s.trim()).filter(Boolean), $('pgPat').value)
+  const vault = new PgVault(), hits = new Map()
+  let out = $('pgText').value
+  for (const r of rules) out = outside(out, plain => plain.replace(r.re, m => { hits.set(r.name, (hits.get(r.name) || 0) + 1); return tokenText(vault.token(r.label, m, r.key(m))) }))
+  $('pgOut').innerHTML = esc(out).replace(PH_ESC, m => '<span class="ph">' + m + '</span>')
+  $('pgRules').innerHTML = rules.map(r => `<span class="rule ${hits.get(r.name) ? 'lit' : ''}">${esc(r.name)}<b>${hits.get(r.name) || 0}</b></span>`).join('')
+    + '<span class="rule">NER (if on)<b>–</b></span>' + (patternOk ? '' : '<span class="tag bad">pattern doesn\'t compile: the mod would block the session</span>')
+  $('pgVault').innerHTML = vault.rows.length
+    ? '<thead><tr><th>Placeholder</th><th>Real value</th></tr></thead><tbody>' + vault.rows.map(r => `<tr><td><span class="ph">${esc(tokenText(r.token))}</span></td><td><mark class="real">${esc(r.value)}</mark></td></tr>`).join('') + '</tbody>'
+    : '<tbody><tr><td class="muted">Nothing found yet.</td></tr></tbody>'
+}
+$('pgText').value = 'Acme Freight A/S (ops@acmefreight.dk) asked again about SHP12345678.\nACME FREIGHT says the pallets for acme-freight are still held in Aarhus.\nRefund to DK50 0040 0440 1162 43, call +45 12 34 56 78.\nNordlys Trading is not on the list, so it stays.'
+$('pgCust').value = 'Acme Freight A/S\nNordic Widgets ApS'
+$('pgPat').value = '\\bSHP\\d{8}\\b'
+for (const id of ['pgText', 'pgCust', 'pgPat']) $(id).addEventListener('input', pgRun)
+pgRun()
+
+/* ================= 5. Round trip ================= */
+const PROMPT = `Why is ${REAL.ship} for ${REAL.cust} late? Ask ${REAL.person} if needed, write a status line to out.txt and check the news.`
+const MASKED = `Why is ${ph('SHIPMENT', 1)} for ${ph('CUSTOMER', 1)} [hint: Danish freight forwarder] late? Ask ${ph('PERSON', 1)} if needed, write a status line to out.txt and check the news.`
+const TRIP = [
+  { st: 'You type', sub: 'prompt', title: 'You type the prompt.', text: 'Real names, as you would write them.', pay: [['You', 'Claude Code', PROMPT]],
+    tech: 'Nothing has happened yet. On your screen the prompt stays exactly as typed, before and after masking.' },
+  { st: 'Masked', sub: 'session.append', title: 'The row is masked.', text: 'Before it is stored and before any request sends it.', pay: [['session.append', 'stored row', MASKED]],
+    tech: 'session.append: the list finds the customer (and adds its hint once), the pattern finds the shipment, the NER server finds the person. The placeholder table gets three entries, saved next to the transcript.' },
+  { st: 'Sent', sub: 'Anthropic API', cloud: true, title: 'The request leaves.', text: 'The first and only point where text crosses to the cloud.', pay: [['Claude Code', 'Anthropic API', MASKED, true]],
+    tech: 'prompt.compose has also added a note to the system prompt: copy placeholders exactly, never guess real values. The part of the system prompt shared by every user is left alone, so the prompt cache still hits.' },
+  { st: 'Reply', sub: 'turn.step', title: 'The reply streams back.', text: 'Claude wrote placeholders; you read names.', pay: [['Claude wrote', 'stream', `${ph('CUSTOMER', 1)}'s shipment ${ph('SHIPMENT', 1)} is held at the Aarhus hub. Writing the status line now.`], ['turn.step', 'your screen', `${REAL.cust}'s shipment ${REAL.ship} is held at the Aarhus hub. Writing the status line now.`]],
+    tech: 'turn.step unmasks each piece as it streams. Only placeholders with this session\'s marker (.k3f9) are restored.' },
+  { st: 'Command', sub: 'tool.call', title: 'Claude runs a command.', text: 'Placeholders in, real values out.', pay: [['Claude asked', 'tool.call', `echo "${ph('CUSTOMER', 1)} / ${ph('SHIPMENT', 1)}: held at Aarhus hub" > out.txt`], ['tool.call', 'Bash', `echo "${REAL.cust} / ${REAL.ship}: held at Aarhus hub" > out.txt`]],
+    tech: 'tool.call restores the arguments from the placeholder table before the permission prompt, so you approve the real command. The hint is never written into commands or files.' },
+  { st: 'out.txt', sub: 'your file', title: 'The file is real.', text: 'Claude never saw the values it just wrote.', pay: [['out.txt', 'on disk', `${REAL.cust} / ${REAL.ship}: held at Aarhus hub`]],
+    tech: 'The command\'s own output comes back as a tool result, and session.append masks that row too.' },
+  { st: 'Search', sub: 'WebSearch', cloud: true, title: 'The web search stays masked.', text: 'Tools that talk to servers keep placeholders.', pay: [['tool.call', 'WebSearch', `${ph('CUSTOMER', 1)} Aarhus hub delay`, true]],
+    tech: 'WebSearch, WebFetch and every MCP tool are in maskedTools by default. The search engine sees the placeholder, not the customer.' },
+]
+let hop = 0
+$('track').insertAdjacentHTML('beforeend', TRIP.map((t, i) => `<button class="station ${t.cloud ? 'cloud' : ''}" data-i="${i}"><b>${esc(t.st)}</b><small>${esc(t.sub)}</small></button>`).join(''))
+const stations = [...$('track').querySelectorAll('.station')]
+function placeCloudLines() {
+  $('track').querySelectorAll('.line-cloud').forEach(x => x.remove())
+  TRIP.forEach((t, i) => {
+    if (!t.cloud) return
+    const s = stations[i]
+    const l = document.createElement('div'); l.className = 'line-cloud'; l.style.left = (s.offsetLeft - 5) + 'px'
+    l.innerHTML = '<span>LEAVES</span>'; $('track').appendChild(l)
+  })
+}
+function renderTrip() {
+  const t = TRIP[hop]
+  stations.forEach((s, i) => { s.classList.toggle('now', i === hop); s.classList.toggle('past', i < hop) })
+  const s = stations[hop]
+  $('truck').style.left = (s.offsetLeft + s.offsetWidth / 2) + 'px'
+  $('tripTitle').textContent = `${hop + 1}/${TRIP.length} · ${t.title}`
+  $('tripText').textContent = t.text
+  $('tripTech').textContent = t.tech
+  $('tripPayload').innerHTML = t.pay.map(([from, to, text, cloud]) => {
+    const l = cloud ? leaksIn(text) : []
+    const tag = cloud ? (l.length ? `<span class="tag bad">${l.length} real values left</span>` : '<span class="tag ok">no real values</span>') : ''
+    return `<div class="payload"><header><span><b>${esc(from)}</b> → ${esc(to)}</span>${tag}</header><pre>${hl(text, cloud)}</pre></div>`
+  }).join('')
+  $('tripBack').disabled = hop === 0; $('tripNext').disabled = hop === TRIP.length - 1
+}
+$('track').addEventListener('click', e => { const b = e.target.closest('.station'); if (b) { hop = Number(b.dataset.i); renderTrip() } })
+$('tripNext').addEventListener('click', () => { hop = Math.min(TRIP.length - 1, hop + 1); renderTrip() })
+$('tripBack').addEventListener('click', () => { hop = Math.max(0, hop - 1); renderTrip() })
+steppers.trip = {
+  forward: () => { if (hop < TRIP.length - 1) { hop++; renderTrip(); return true } return false },
+  back: () => { if (hop > 0) { hop--; renderTrip(); return true } return false },
+}
+hooks[4] = () => { requestAnimationFrame(() => { placeCloudLines(); renderTrip() }) }
+window.addEventListener('resize', () => { if (at === 4) { placeCloudLines(); renderTrip() } })
+
+/* ================= 6. Stream ================= */
+const FULL = `The customer is ${ph('CUSTOMER', 1)}, and shipment ${ph('SHIPMENT', 1)} is held at the hub.`
+const CUTS = [16, 23, 31, 46, 57, 65, 79]
+const PIECES = []
+{ let prev = 0; for (const c of [...CUTS, FULL.length]) { PIECES.push(FULL.slice(prev, c)); prev = c } }
+const PARTIAL = /^<<(?:[A-Z][A-Z0-9_]*(?:-\d*)?(?:\.[a-z0-9]{0,4})?)?>?$/
+function holdFrom(buf) {
+  const i = buf.lastIndexOf('<<')
+  if (i >= 0 && buf.length - i <= 80 && PARTIAL.test(buf.slice(i))) return i
+  if (buf.endsWith('<')) return buf.length - 1
+  return buf.length
+}
+const VAULT6 = { ['CUSTOMER_1']: REAL.cust, ['SHIPMENT_1']: REAL.ship }
+const unmask6 = t => t.replace(PG_PH, (w, tok) => VAULT6[tok] ?? w)
+let pIdx = 0, pending = '', screen = '', autoRun = 0
+function renderStream(info) {
+  $('stIn').innerHTML = PIECES.slice(0, pIdx).map((p, i) => `<span class="chunk ${i === pIdx - 1 ? 'newest' : ''}">${esc(JSON.stringify(p))}</span>`).join('') || '<span class="muted small">Nothing yet.</span>'
+  $('stBuf').innerHTML = pending ? esc(pending) : '<span class="muted small">empty</span>'
+  $('stOut').innerHTML = hl(screen) + (pIdx < PIECES.length ? '<span class="cursor"></span>' : '')
+  $('stInfo').textContent = info || ''
+  $('stNext').disabled = pIdx >= PIECES.length
+}
+function stepStream() {
+  if (pIdx >= PIECES.length) return false
+  pending += PIECES[pIdx++]
+  const done = pIdx >= PIECES.length
+  const hold = done ? pending.length : holdFrom(pending)
+  const ready = pending.slice(0, hold); pending = pending.slice(hold)
+  screen += unmask6(ready)
+  const info = pending ? `Holding "${pending}": it could still become a placeholder.` : (ready.includes('<<') ? 'Complete: restored and shown.' : 'Shown as it came.')
+  renderStream(done ? 'Stream ended: anything held is let through.' : info)
+  return true
+}
+function resetStream() { autoRun++; pIdx = 0; pending = ''; screen = ''; renderStream('') }
+$('stNext').addEventListener('click', () => stepStream())
+$('stReset').addEventListener('click', resetStream)
+$('stAuto').addEventListener('click', async () => { resetStream(); const run = autoRun; while (run === autoRun && stepStream()) await sleep(reduced ? 0 : 750) })
+steppers.stream = { forward: () => stepStream(), back: () => false }
+hooks[5] = resetStream
+resetStream()
+
+/* ================= 7. Tools ================= */
+const TOOLS = [
+  { name: 'Bash', arg: `echo "${ph('CUSTOMER', 1)}" > out.txt` },
+  { name: 'Edit', arg: `old_string: "${ph('CUSTOMER', '1-2')}"` },
+  { name: 'Write', arg: `report.md: "Status for ${ph('CUSTOMER', 1)}"` },
+  { name: 'WebSearch', arg: `query: "${ph('CUSTOMER', 1)} port strike"` },
+  { name: 'WebFetch', arg: `url: "https://news.example/${ph('CUSTOMER', 1)}"` },
+  { name: 'mcp__slack__post', arg: `text: "${ph('CUSTOMER', 1)} delayed"` },
+  { name: 'mcp__local_db__query', arg: `sql: "SELECT * FROM orders WHERE customer = '${ph('CUSTOMER', 1)}'"` },
+  { name: 'Read', arg: 'file_path: "shipments.csv"' },
+]
+const VAL6 = { 'CUSTOMER_1': REAL.cust, 'CUSTOMER_1-2': 'ACME FREIGHT' }
+const glob = g => new RegExp('^' + g.split('*').map(reEsc).join('.*') + '$')
+let toolSel = 'Bash'
+function keepsPh(name) {
+  const masked = ['WebSearch', 'WebFetch', 'mcp__*'].map(glob)
+  const unmasked = ($('localDb').checked ? ['mcp__local_db__*'] : []).map(glob)
+  return masked.some(r => r.test(name)) && !unmasked.some(r => r.test(name))
+}
+function renderTools() {
+  $('tools').innerHTML = TOOLS.map(t => `<button class="tool" data-n="${t.name}" aria-pressed="${t.name === toolSel}"><b>${esc(t.name)}</b>${keepsPh(t.name) ? '<span class="tag info">keeps placeholders</span>' : '<span class="tag amber">gets real values</span>'}</button>`).join('')
+  const t = TOOLS.find(x => x.name === toolSel)
+  const keep = keepsPh(t.name)
+  const out = keep ? t.arg : t.arg.replace(PG_PH, (w, tok) => VAL6[tok] ?? w)
+  $('toolIn').innerHTML = hl(t.arg)
+  $('toolOut').innerHTML = hl(out, keep)
+  $('toolOutLabel').textContent = t.name + ' receives'
+  $('toolWhy').innerHTML = keep
+    ? `<span class="tag info">kept masked</span> ${esc(t.name)} matches <code>maskedTools</code>: it can send its arguments to a server, so they leave as placeholders.`
+    : (t.arg.includes('<<') ? `<span class="tag amber">restored</span> ${esc(t.name)} runs on this machine, so it gets the real values${t.name === 'Edit' ? ', in the exact spelling that is in the file, so the edit finds its text' : ''}.` : `<span class="tag ok">nothing to restore</span> No placeholders in the arguments; the file is read as it is, and its contents are masked when they come back.`)
+  $('toolCfg').innerHTML = `{\n  <span class="s">"maskedTools"</span>: [<span class="s">"WebSearch"</span>, <span class="s">"WebFetch"</span>, <span class="s">"mcp__*"</span>],   <span class="c">// the default</span>\n  <span class="s">"unmaskedTools"</span>: [${$('localDb').checked ? '<span class="g">"mcp__local_db__*"</span>' : ''}]\n}`
+}
+$('tools').addEventListener('click', e => { const b = e.target.closest('.tool'); if (b) { toolSel = b.dataset.n; renderTools() } })
+$('localDb').addEventListener('change', renderTools)
+renderTools()
+
+/* ================= 8. Anatomy ================= */
+const PARTS = [
+  ['<<', 'Opening brackets. Rare in real text and code, and they survive Markdown, JSON and shell quoting.'],
+  ['CUSTOMER', 'The label: what kind of value it is. Built in: EMAIL, PHONE, IBAN, CPR. Your patterns add their own (SHIPMENT). NER adds PERSON.'],
+  ['_1', 'The customer\'s number in this session. Same customer, same number, every time, so Claude can reason across turns and the prompt cache stays warm.'],
+  ['-2', 'The spelling. "ACME FREIGHT" is the same customer as "Acme Freight A/S", written differently. Each spelling gets its own token and is restored exactly as written. Claude\'s Edit tool needs that to find the text in the file.'],
+  ['.k3f9', 'The session marker, four random characters picked at start. Only placeholders with this marker are restored, so text that merely looks like one, in code or from another session, is left alone.'],
+  ['>>', 'Closing brackets. While a reply streams, a half-finished placeholder is held back until these arrive.'],
+]
+function renderAna(i) {
+  $('ana').innerHTML = PARTS.map((p, j) => `<button data-i="${j}" aria-pressed="${j === i}">${esc(p[0])}</button>`).join('')
+  $('anaOut').textContent = PARTS[i][1]
+}
+$('ana').addEventListener('click', e => { const b = e.target.closest('button'); if (b) renderAna(Number(b.dataset.i)) })
+renderAna(3)
+const VARS = [
+  ['Acme Freight A/S', ph('CUSTOMER', 1), 'as listed'],
+  ['ACME FREIGHT', ph('CUSTOMER', '1-2'), 'no suffix, other case'],
+  ['acme-freight', ph('CUSTOMER', '1-3'), 'another separator'],
+  ['Acme Freight GmbH', ph('CUSTOMER', '1-4'), 'another legal suffix'],
+  ['acmefreightgroup.com', ph('CUSTOMER', '1-5') + '.com', 'glued into a host name'],
+  ['AcmeTrack', ph('CUSTOMER', '1-6'), 'an alias you listed'],
+]
+$('variants').innerHTML = VARS.map(v => `<div class="variant"><span><mark class="real">${esc(v[0])}</mark> <span class="small muted">${esc(v[2])}</span></span><span class="arrow">→</span><span>${hl(v[1])}</span></div>`).join('')
+async function playVariants() {
+  const rows = [...$('variants').children]
+  rows.forEach(r => r.classList.remove('in'))
+  for (const r of rows) { if (!reduced) await sleep(180); r.classList.add('in') }
+}
+$('varPlay').addEventListener('click', playVariants)
+hooks[7] = () => setTimeout(playVariants, 300)
+
+/* ================= 9. Detection ================= */
+const DET = {
+  list: { found: ['cust'], cards: [['2–4 ms', 'masking a row with the list'], ['exact', 'every listed spelling and alias'], ['0', 'names found that you didn\'t list']] },
+  ner: { found: ['cust', 'person', 'cust2'], cards: [['13–35 ms', 'a prompt, NER call included'], ['16 / 16', 'names found in 9 short test texts'], ['≈ 2 s', 'for 100 KB, such as a big log']] },
+  both: { found: ['cust', 'person', 'cust2'], cards: [['13–35 ms', 'a prompt: the list plus a NER call'], ['list first', 'known customers keep hints and aliases'], ['safety net', 'NER finds names the list doesn\'t have']] },
+}
+const SENT = [['person', REAL.person], [null, ' from '], ['cust2', REAL.cust2], [null, ' forwarded the claim to '], ['cust', REAL.cust], [null, ' about the crates held in Aarhus.']]
+const DET_PH = { cust: ph('CUSTOMER', 1), cust2: ph('CUSTOMER', 2), person: ph('PERSON', 1) }
+const WIRE_REQ = `POST http://127.0.0.1:8765/detect\n{ "texts": ["${REAL.person} from ${REAL.cust2} forwarded…"],\n  "labels": ["company", "person"],\n  "threshold": 0.5 }`
+const WIRE_RES = `200 OK in 8–20 ms\n{ "results": [[\n  { "text": "${REAL.person}", "label": "person" },\n  { "text": "${REAL.cust2}", "label": "company" },\n  { "text": "${REAL.cust}", "label": "company" } ]] }`
+async function renderDet(v) {
+  setSeg($('detSeg'), v)
+  const d = DET[v]
+  $('detSentence').innerHTML = SENT.map(([k, t]) => !k ? esc(t) : d.found.includes(k) ? `<span class="ph" title="${esc(t)}">${esc(DET_PH[k])}</span>` : `<mark class="leak" title="not masked">${esc(t)}</mark>`).join('')
+  $('detCards').innerHTML = d.cards.map(([b, t]) => `<div class="card"><span class="big">${esc(b)}</span><span class="muted">${esc(t)}</span></div>`).join('')
+  if (v === 'list') {
+    $('wireTitle').textContent = 'With "list", no NER call is made'
+    $('wire').innerHTML = `<pre class="code" style="grid-column:1/-1">${esc('{\n  "customers": ["' + REAL.cust + '"],\n  "detection": "list"\n}')}</pre>`
+  } else {
+    $('wireTitle').textContent = 'The call to the NER server, on localhost'
+    $('wire').innerHTML = `<pre class="code">${esc(WIRE_REQ)}</pre><pre class="code" id="wireRes" style="opacity:.15;transition:opacity .4s">${esc(WIRE_RES)}</pre>`
+    if (!reduced) await sleep(450)
+    const r = $('wireRes'); if (r) r.style.opacity = '1'
+  }
+}
+$('detSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (b) renderDet(b.dataset.v) })
+hooks[8] = () => renderDet(document.querySelector('#detSeg [aria-pressed="true"]').dataset.v)
+renderDet('both')
+
+/* ================= 10. Break it ================= */
+const BREAK = {
+  none: { name: 'Nothing broken', sub: 'the normal case', lamp: ['', 'customer-mask on'],
+    term: [['p', '> Why is ' + REAL.ship + ' for ' + REAL.cust + ' late?'], ['m', '  sent: "Why is ' + ph('SHIPMENT', 1) + ' for ' + ph('CUSTOMER', 1) + ' late?"'], ['', '  ' + REAL.cust + '\'s shipment is held at the hub.']] },
+  version: { name: 'Old Claude Code', sub: 'older than 2.1.296', lamp: ['bad', 'customer-mask: BLOCKED'],
+    term: [['p', '> Why is ' + REAL.ship + ' late?'], ['e', '  customer-mask stopped this request so customer data could not leak:'], ['e', '  Claude Code 2.1.290 is older than 2.1.296, the oldest version customer-mask is tested on. Run `claude update`.'], ['m', '  sent: nothing']] },
+  config: { name: 'Broken config', sub: 'a pattern that won\'t compile', lamp: ['bad', 'customer-mask: BLOCKED'],
+    term: [['p', '> Why is ' + REAL.ship + ' late?'], ['e', '  customer-mask stopped this request so customer data could not leak:'], ['e', '  a pattern in the customer-mask config does not compile. Fix it, then run /customer-mask reload.'], ['m', '  sent: nothing']] },
+  ner: { name: 'NER server down', sub: 'detection "both"', lamp: ['bad', 'customer-mask: BLOCKED'],
+    term: [['p', '> Why is ' + REAL.ship + ' late?'], ['e', '  customer-mask stopped this request so customer data could not leak:'], ['e', '  the NER server at http://127.0.0.1:8765 does not answer. Start it, then run /customer-mask reload.'], ['m', '  sent: nothing']] },
+  slow: { name: 'Masking too slow', sub: 'a huge log, NER past its timeout', lamp: ['warn', 'customer-mask on · 1 row removed'],
+    term: [['p', '> Summarise app.log'], ['m', '  (Read app.log: masking it took too long)'], ['m', '  sent: "[customer-mask could not check this content for customer data in time, so it was removed before it was stored or sent. Ask the user for a smaller excerpt.]"'], ['', '  I couldn\'t see app.log. Could you paste the part around the error?']] },
+  tool: { name: 'Can\'t restore a call', sub: 'tool arguments', lamp: ['warn', 'customer-mask on · 1 call denied'],
+    term: [['m', '  Claude asked: Bash(echo "' + ph('CUSTOMER', 1) + '" > out.txt)'], ['e', '  denied: customer-mask could not restore the customer data in this call\'s arguments; retry it.'], ['m', '  the command did not run, and Claude retries']] },
+}
+let brk = 'none'
+async function renderBreak() {
+  $('breakers').innerHTML = Object.entries(BREAK).map(([k, b]) => `<button class="breaker" data-k="${k}" aria-pressed="${k === brk}"><b>${esc(b.name)}</b><small>${esc(b.sub)}</small></button>`).join('')
+  const b = BREAK[brk]
+  $('lamp').className = 'lamp ' + b.lamp[0]; $('lampText').textContent = b.lamp[1]
+  $('term').innerHTML = ''
+  for (const [cls, line] of b.term) {
+    $('term').insertAdjacentHTML('beforeend', `<div class="${cls}">${hl(line)}</div>`)
+    if (!reduced) await sleep(260)
+    if (BREAK[brk] !== b) return
+  }
+}
+$('breakers').addEventListener('click', e => { const x = e.target.closest('.breaker'); if (x) { brk = x.dataset.k; renderBreak() } })
+hooks[9] = renderBreak
+
+/* ================= 11. Guess ================= */
+const GUESS = {
+  ctx: { mail: `Please confirm the 40 pallets for ${ph('CUSTOMER', 1)} from the warehouse in Billund. The new ${ph('CUSTOMER', '1-2')} sets ship to the distribution centre in Jiaxing next week.`,
+    pct: '3–4 of 5', label: 'customers named', text: 'From context alone (the town, the goods, a product line), the models named 3 to 4 of the 5 well-known customers in the test. Masking the brands and the address as aliases lowered their confidence, but "a distribution centre in Jiaxing" was still enough to guess.', color: 'var(--leak)', deg: 252 },
+  vague: { mail: `${ph('CUSTOMER', 1)} [hint: Danish manufacturer, consumer goods] wants a quote for 40 pallets next week.`,
+    pct: '25–30%', label: 'larger model', text: 'With the vague hint "Danish manufacturer, consumer goods", only the larger model named LEGO, at 25 to 30% confidence. The smaller one didn\'t.', color: 'var(--cargo)', deg: 100 },
+  sharp: { mail: `${ph('CUSTOMER', 1)} [hint: Danish toy manufacturer famous for interlocking plastic bricks] wants a quote for 40 pallets next week.`,
+    pct: '85–97%', label: 'both models', text: 'With "Danish toy manufacturer famous for interlocking plastic bricks", both Claude models named LEGO, at 85 to 97% confidence. A hint that describes a famous company identifies it.', color: 'var(--leak)', deg: 330 },
+}
+let gk = 'ctx', revealed = false
+function renderGuess() {
+  setSeg($('guessSeg'), gk)
+  const g = GUESS[gk]
+  $('guessEmail').innerHTML = `<div class="meta">to: ops-desk · subject: pallets</div>${hl(g.mail)}`
+  $('meter').style.background = revealed ? `conic-gradient(${g.color} ${g.deg}deg, var(--deck-2) 0)` : 'conic-gradient(var(--deck-2) 360deg, var(--deck-2) 0)'
+  $('meterTxt').innerHTML = revealed ? `${esc(g.pct)}<small>${esc(g.label)}</small>` : '?'
+  $('guessText').textContent = g.text
+  $('guessText').classList.toggle('reveal-hide', !revealed)
+  $('guessReveal').textContent = revealed ? 'Hide' : 'Reveal Claude\'s answer'
+}
+$('guessSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; gk = b.dataset.v; revealed = false; renderGuess() })
+$('guessReveal').addEventListener('click', () => { revealed = !revealed; renderGuess() })
+hooks[10] = () => { revealed = false; renderGuess() }
+renderGuess()
+
+/* ================= 12. Limits ================= */
+const LIMITS = [
+  ['Context gives customers away', 'measured', 'Masking hides values, not what the text says around them. A city, the goods or a product can identify a well-known customer. Keep hints vague; treat this as risk reduction, not anonymisation.'],
+  ['Commands get real values', 'by design', 'Bash runs with real values so scripts work on real files. A command that sends data somewhere itself (curl to an outside API) sends the real values. WebSearch, WebFetch and MCP tools keep placeholders.'],
+  ['Headless session titles', 'Claude Code', 'In claude -p and SDK runs, Claude Code asks a small model to title the session from the raw first prompt, before any mod hook runs. The mod sets a title from the masked prompt, but interactive sessions haven\'t been checked yet.'],
+  ['--safe-mode and --bare', 'Claude Code', 'Both start Claude Code without any mods, this one included, and no managed setting blocks them. Cover it with policy, or route Claude traffic through a gateway you control.'],
+  ['Images and PDFs', 'trade-off', 'Text masking can\'t see pixels, so images and PDFs are removed before sending, and Claude is told why. You can allow them in the config if you know they hold no customer data.'],
+  ['NER misses and noise', 'trade-off', 'A name the list doesn\'t have and the model misses goes out as written. On source code, spaCy flags some identifiers as companies; a filter drops most, the rest get masked. scope: "prompts" avoids that for coding work.'],
+]
+$('limits').innerHTML = LIMITS.map(([h, tag, more], i) => `<button class="limit" aria-expanded="${i === 0}"><span class="tag ${tag === 'measured' ? 'bad' : tag === 'by design' ? 'amber' : 'info'}" style="justify-self:start">${esc(tag)}</span><h3>${esc(h)}</h3><span class="more">${esc(more)}</span></button>`).join('')
+$('limits').addEventListener('click', e => { const b = e.target.closest('.limit'); if (b) b.setAttribute('aria-expanded', String(b.getAttribute('aria-expanded') !== 'true')) })
+
+/* ================= copy ================= */
+document.querySelectorAll('.copy').forEach(btn => btn.addEventListener('click', () => {
+  const pre = $(btn.dataset.copy)
+  const done = () => { btn.textContent = 'Copied'; setTimeout(() => (btn.textContent = 'Copy'), 1500) }
+  const fallback = () => { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = 'Selected' }
+  try { navigator.clipboard.writeText(pre.textContent).then(done, fallback) } catch (_) { fallback() }
+}))
+
+/* start */
+const m = /^#p(\d+)$/.exec(location.hash || '')
+show(m ? Number(m[1]) - 1 : 0)
+})()
+</script>
+
+</html>
