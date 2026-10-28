@@ -38,6 +38,9 @@ type World = {
  * project folder holding the config file, a model that streams `reply`, a
  * Bash tool that records what it was asked to run, and a system prompt.
  */
+/** On a Windows host the test kit hands paths over in Windows form (C:\\proj\\...); the world keys files in POSIX form. */
+const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
+
 function world(on: On, w: World = {}) {
   const files = w.files ?? { '/proj/.claude/customer-mask.json': CONFIG }
   const seen = { requestSent: false, ran: '', writes: {} as Record<string, string> }
@@ -45,16 +48,16 @@ function world(on: On, w: World = {}) {
   mock.env(on, w.env ?? { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/proj' }))
   on('fs.read', ($, e) => {
-    const text = files[e.path]
+    const text = files[posix(e.path)]
     return text === undefined ? { deny: `ENOENT: ${e.path}` } : { value: text }
   })
   on('ui.status', () => ({ value: undefined }))
   on('ui.invalidate', () => ({ value: undefined }))
-  on('fs.exists', ($, e) => ({ value: e.path in files || Object.keys(files).some(f => f.startsWith(`${e.path}/`)) }))
+  on('fs.exists', ($, e) => ({ value: posix(e.path) in files || Object.keys(files).some(f => f.startsWith(`${posix(e.path)}/`)) }))
   on('fs.write', ($, e) => {
     if (w.failWrites) return { deny: 'disk full' }
-    seen.writes[e.path] = e.text
-    files[e.path] = e.text
+    seen.writes[posix(e.path)] = e.text
+    files[posix(e.path)] = e.text
     return { value: undefined }
   })
   on('classic.SessionStart', () => ({}))
@@ -75,7 +78,7 @@ function world(on: On, w: World = {}) {
   on('prompt.context', () => ({ blocks: w.contextBlocks ?? [] }) as never)
   on('prompt.attachment', () => ({ text: w.attachmentText ?? null }) as never)
   on('fs.list', ($, e) => {
-    const prefix = `${e.path}/`
+    const prefix = `${posix(e.path)}/`
     const names = Object.keys(files).filter(f => f.startsWith(prefix) && !f.slice(prefix.length).includes('/'))
     return {
       value: names.map(f => ({ name: f.slice(prefix.length), kind: 'file', size: (files[f] ?? '').length, mtimeMs: 0, isLink: false })),
