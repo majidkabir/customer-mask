@@ -18,14 +18,20 @@ Nothing is logged: not the texts, not what was found.
 """
 
 import argparse
+import heapq
+import itertools
 import json
+import os
 import re
+import socketserver
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Lock
 
 MAX_BODY = 16 * 1024 * 1024
+BATCH = 16  # pieces per model call; between calls a smaller waiting request goes first
+CACHE_SIZE = 50000  # pieces whose results are kept
 
 
 LINE_NUMBER = re.compile(r"[ \t]*\d+\t")
@@ -61,8 +67,10 @@ def chunks(text, size):
 
 class Gliner:
     """GLiNER: finds whatever labels it is asked for ("company", "person",
-    "street address", ...), no training needed. Needs `pip install gliner`
-    (which brings PyTorch); the model is downloaded from Hugging Face once."""
+    "street address", ...), no training needed. Needs
+    `pip install gliner protobuf sentencepiece` (gliner brings PyTorch; the
+    PII model's tokenizer needs the other two); the model is downloaded from
+    Hugging Face once."""
 
     name = "gliner"
 
@@ -74,29 +82,14 @@ class Gliner:
         # GLiNER reads up to about 384 words at a time; longer text is split.
         self.size = 1200
 
-    def detect(self, texts, labels, threshold):
-        pieces = [
-            (i, off + o, part)
-            for i, t in enumerate(texts)
-            for off, line in lines(t)
-            for o, part in chunks(line, self.size)
+    def predict(self, parts, labels, threshold):
+        """Entities per piece, with offsets in the piece."""
+        run = getattr(self.model, "inference", None) or getattr(self.model, "batch_predict_entities", None)
+        found = run(parts, labels, threshold=threshold) if run else [
+            self.model.predict_entities(p, labels, threshold=threshold) for p in parts
         ]
-        batch = getattr(self.model, "batch_predict_entities", None)
-        if batch is not None and pieces:
-            found = batch([p for _, _, p in pieces], labels, threshold=threshold)
-        else:
-            found = [self.model.predict_entities(p, labels, threshold=threshold) for _, _, p in pieces]
-        results = [[] for _ in texts]
-        for (i, off, _), ents in zip(pieces, found):
-            for e in ents:
-                results[i].append({
-                    "text": e["text"],
-                    "label": e["label"],
-                    "start": e["start"] + off,
-                    "end": e["end"] + off,
-                    "score": round(float(e["score"]), 3),
-                })
-        return results
+        return [[{"text": e["text"], "label": e["label"], "start": e["start"], "end": e["end"],
+                  "score": round(float(e["score"]), 3)} for e in ents] for ents in found]
 
 
 # What spaCy's fixed entity types mean in the labels customer-mask asks for.
@@ -123,29 +116,101 @@ class Spacy:
         self.nlp = spacy.load(self.model_name, exclude=["tagger", "parser", "lemmatizer", "attribute_ruler", "morphologizer"])
         self.size = 100_000
 
-    def detect(self, texts, labels, threshold):
+    def predict(self, parts, labels, threshold):
+        """Entities per piece, with offsets in the piece."""
         wanted = {label: SPACY_TYPES.get(label.lower(), set()) for label in labels}
+        out = []
+        for doc in self.nlp.pipe(parts, batch_size=256):
+            found = []
+            for ent in doc.ents:
+                for label, types in wanted.items():
+                    if ent.label_ in types:
+                        found.append({"text": ent.text, "label": label, "start": ent.start_char, "end": ent.end_char})
+                        break
+            out.append(found)
+        return out
+
+
+class Gate:
+    """One model call at a time (models are not all thread-safe). Of the
+    requests waiting, the one with the fewest pieces left goes next, so a
+    prompt isn't stuck behind a long file."""
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.busy = False
+        self.waiting = []
+        self.seq = itertools.count()
+
+    def run(self, size, fn):
+        key = (size, next(self.seq))
+        with self.cond:
+            heapq.heappush(self.waiting, key)
+            while self.busy or self.waiting[0] != key:
+                self.cond.wait()
+            heapq.heappop(self.waiting)
+            self.busy = True
+        try:
+            return fn()
+        finally:
+            with self.cond:
+                self.busy = False
+                self.cond.notify_all()
+
+
+class Detector:
+    """Splits texts into pieces (lines, long ones cut), answers pieces it has
+    seen before from a cache (Claude Code sends the same system prompt and
+    reminders every turn), and runs the rest through the backend a batch at a
+    time."""
+
+    def __init__(self, backend):
+        self.backend = backend
+        self.name = backend.name
+        self.model_name = backend.model_name
+        self.gate = Gate()
+        self.cache = {}
+        self.cache_lock = threading.Lock()
+
+    def detect(self, texts, labels, threshold):
         pieces = [
             (i, off + o, part)
             for i, t in enumerate(texts)
             for off, line in lines(t)
-            for o, part in chunks(line, self.size)
+            for o, part in chunks(line, self.backend.size)
         ]
+        key = (tuple(labels), threshold)
+        with self.cache_lock:
+            found = {p: self.cache.get((key, p)) for _, _, p in pieces}
+        todo = list(dict.fromkeys(p for p, ents in found.items() if ents is None))
+        for n in range(0, len(todo), BATCH):
+            batch = todo[n:n + BATCH]
+            ents = self.gate.run(len(todo) - n, lambda: self.backend.predict(batch, labels, threshold))
+            with self.cache_lock:
+                for p, e in zip(batch, ents):
+                    found[p] = e
+                    if len(self.cache) >= CACHE_SIZE:
+                        self.cache.pop(next(iter(self.cache)))
+                    self.cache[(key, p)] = e
         results = [[] for _ in texts]
-        for (i, off, _), doc in zip(pieces, self.nlp.pipe((p for _, _, p in pieces), batch_size=256)):
-            for ent in doc.ents:
-                for label, types in wanted.items():
-                    if ent.label_ in types:
-                        results[i].append({
-                            "text": ent.text, "label": label,
-                            "start": ent.start_char + off, "end": ent.end_char + off,
-                        })
-                        break
+        for i, off, p in pieces:
+            for e in found[p]:
+                results[i].append({**e, "start": e["start"] + off, "end": e["end"] + off})
         return results
 
 
+class Server(ThreadingHTTPServer):
+    # On Windows, SO_REUSEADDR would let a second server take the same port.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        # HTTPServer looks up the host's name (socket.getfqdn), which can take
+        # 30 s or more on some Macs.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[0], self.server_address[1]
+
+
 def make_handler(backend):
-    lock = Lock()  # one request at a time: models are not all thread-safe
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):  # never log what was sent
@@ -180,8 +245,7 @@ def make_handler(backend):
                     raise ValueError("texts must be a list of strings")
             except (ValueError, KeyError, TypeError) as err:
                 return self.answer(400, {"error": str(err)})
-            with lock:
-                results = backend.detect(texts, labels, threshold)
+            results = backend.detect(texts, labels, threshold)
             self.answer(200, {"results": results})
 
     return Handler
@@ -196,14 +260,14 @@ def main():
     args = p.parse_args()
 
     started = time.time()
-    backend = Gliner(args.model) if args.backend == "gliner" else Spacy(args.model)
+    backend = Detector(Gliner(args.model) if args.backend == "gliner" else Spacy(args.model))
     backend.detect(["Warm-up: Nordlys Trading A/S and Lars Holm."], ["company", "person"], 0.5)
     print(
         f"customer-mask NER: {backend.name} ({backend.model_name}) loaded in {time.time() - started:.1f} s, "
         f"listening on http://{args.host}:{args.port}",
         file=sys.stderr,
     )
-    ThreadingHTTPServer((args.host, args.port), make_handler(backend)).serve_forever()
+    Server((args.host, args.port), make_handler(backend)).serve_forever()
 
 
 if __name__ == "__main__":

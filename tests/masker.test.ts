@@ -523,6 +523,13 @@ describe('NER helpers', () => {
     }
   })
 
+  test('pronouns, greetings, roles and Claude itself are not names', () => {
+    for (const v of ['We', 'You', 'Your name', 'Dear', 'Hi', 'Vi', 'Kære', 'Wir', 'Claude', 'Claude Sonnet', 'Claude Opus 5.5', 'Claude Code']) {
+      expect([v, looksLikeName(v)]).toEqual([v, false])
+    }
+    for (const v of ['Dear Sofie', 'Claudia Berg', 'Our Freight ApS']) expect([v, looksLikeName(v)]).toEqual([v, true])
+  })
+
   test('finds: placeholder labels and trailing quotes', () => {
     const finds = nerFinds(
       [

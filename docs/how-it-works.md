@@ -113,7 +113,8 @@ All hooks are in [`hooks/register.ts`](../hooks/register.ts). The masking logic 
 | `prompt.attachment` | mask | Masks text Claude Code injects on its own (an `@file` mention, reminders). If that fails, the text is left out. |
 | `prompt.compose` | mask | Masks the system prompt's sections that vary per session (scope `session`) and appends a note telling Claude how to use placeholders. It runs for every request, so its output must not change: no hints are added here (the first row that names a customer gets the hint instead). Shared sections (the same for everyone on a Claude Code build) are left untouched so the cross-user prompt cache still hits. If masking fails, the per-session sections' text is replaced by a note. |
 | `classic.UserPromptSubmit` | mask | Sets the session title from the masked prompt, so the stored title holds no customer data (if that fails, the title says it was withheld). Also finds the transcript, if `classic.SessionStart` did not. |
-| `turn.step` | unmask | Streams the model's response. Text and thinking chunks are unmasked on the fly for display. When the session is blocked, it answers every request itself with an error, so nothing is sent. |
+| `turn.step` | unmask | Streams the model's response. Text and thinking chunks are unmasked on the fly for display, and so is the step's whole answer. When the session is blocked, it answers every request itself with an error, so nothing is sent. |
+| `ui.render` (AssistantMessage, UserMessage, ToolUse) | unmask | Shows real values in the finished reply, your prompt and a tool call's row, which Claude Code draws from the stored (masked) rows. Only the drawing changes. Tools that keep their placeholders show what they sent. |
 | `tool.call` | unmask | Restores real values in tool arguments before the permission prompt and the tool see them. `WebSearch`, `WebFetch` and every MCP tool keep their placeholders (configurable with `maskedTools` / `unmaskedTools`). Fails closed with a `.catch` that denies the call. |
 | `classic.SessionStart` | – | Finds the session's transcript. On start or resume, adopts the placeholder table saved beside it; `/clear` starts a new table. |
 | `session.end` | mask | When the session ends (or `/clear` ends a conversation), masks the copies Claude Code wrote to disk without passing them through the mod: prompt queue records and tool results' structured records in the transcript and the subagents' transcripts, and full outputs in `tool-results/`. Uses the placeholder table and, for values the model never saw, the detection rules. |
@@ -235,7 +236,7 @@ flowchart TD
     class B,D,X,O bad
 ```
 
-When blocked, the status line shows `🔒 customer-mask: BLOCKED`, and `/customer-mask` says why. For a config problem or a NER server that wasn't running, fix it and run `/customer-mask reload`; for an old Claude Code or an unreadable placeholder table, fix it and restart the session. `/customer-mask` also counts rows removed because masking failed.
+When blocked, the status line shows `customer-mask: 🔒 BLOCKED`, and `/customer-mask` says why. For a config problem or a NER server that wasn't running, fix it and run `/customer-mask reload`; for an old Claude Code or an unreadable placeholder table, fix it and restart the session. `/customer-mask` also counts rows removed because masking failed.
 
 The end-of-session cleanup is best effort: if it fails, or the session doesn't end cleanly (a crash, a killed process), the local copies stay as Claude Code wrote them. Run `tools/clean-transcripts.mjs` then.
 

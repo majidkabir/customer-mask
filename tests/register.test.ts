@@ -29,6 +29,8 @@ type World = {
   failWrites?: boolean
   /** The conversation is not readable yet (early in a headless start). */
   historyUnavailable?: boolean
+  /** The step's whole answer, as the model's stream ends. */
+  answer?: () => string
 }
 
 /**
@@ -61,7 +63,7 @@ function world(on: On, w: World = {}) {
     seen.requestSent = true
     const reply = typeof w.reply === 'function' ? w.reply() : (w.reply ?? [])
     for (const c of reply) yield c
-    return { turnId: 't', index: 0, answer: '', toolUses: [], stopReason: 'end_turn', usage: null }
+    return { turnId: 't', index: 0, answer: w.answer?.() ?? '', toolUses: [], stopReason: 'end_turn', usage: null }
   })
   on('tool.call', ($, e) => {
     if (e.tool === 'Bash') seen.ran = e.command
@@ -732,5 +734,69 @@ describe('prompt cache: the system prompt stays the same', () => {
     expect(first).not.toContain('Acme')
     const stored = await appendPrompt($, 'Status for Acme Freight A/S?')
     expect(JSON.stringify(stored.message?.content)).toContain('[hint: Danish freight forwarder]')
+  })
+})
+
+describe('what is shown on screen', () => {
+  const row = async ($: Engine, component: string, props: object) => {
+    const ui = await $.ui.mount({ plugin: 'customer-mask', surface: 'terminal', component, props } as never)
+    const drawn = JSON.stringify(await ui.drawn())
+    await ui.unmount()
+    return drawn
+  }
+  const COMPONENTS = (on: On) => {
+    on('ui.render', { component: 'AssistantMessage' }, ($, e) => ({ type: 'Text', props: {}, children: [e.props.text] }) as never)
+    on('ui.render', { component: 'UserMessage' }, ($, e) => ({ type: 'Text', props: {}, children: [e.props.text] }) as never)
+    on('ui.render', { component: 'ToolUse' }, ($, e) => ({ type: 'Text', props: {}, children: [JSON.stringify(e.props.input)] }) as never)
+  }
+
+  test('the finished reply, the prompt and a Bash row show real values; a web search row keeps the placeholder', async ($, on) => {
+    world(on)
+    COMPONENTS(on)
+    const p = ph('CUSTOMER', 1, markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content)))
+    expect(await row($, 'AssistantMessage', { text: `${p} is fine.`, isFirstOfReply: true })).toContain('Acme Freight A/S is fine.')
+    expect(await row($, 'UserMessage', { text: `About ${p}`, origin: { kind: 'user' }, isExpanded: false })).toContain('About Acme Freight A/S')
+    const bash = { tool: 'Bash', input: { command: `echo ${p}` }, isRunning: false, isErrored: false, isInterrupted: false }
+    expect(await row($, 'ToolUse', bash)).toContain('echo Acme Freight A/S')
+    const web = { tool: 'WebSearch', input: { query: `${p} news` }, isRunning: false, isErrored: false, isInterrupted: false }
+    expect(await row($, 'ToolUse', web)).toContain(`${p} news`)
+  })
+
+  test('the step\'s whole answer is unmasked too', async ($, on) => {
+    let m = ''
+    world(on, { answer: () => `About ${ph('CUSTOMER', 1, m)}.` })
+    m = markerIn(JSON.stringify((await appendPrompt($, 'Acme Freight A/S')).message?.content))
+    const it = $.turn.step({ turnId: 't', index: 0, model: 'claude', messageCount: 1 })[Symbol.asyncIterator]()
+    let step = await it.next()
+    while (!step.done) step = await it.next()
+    expect((step.value as { answer: string }).answer).toBe('About Acme Freight A/S.')
+  })
+})
+
+describe('Claude\'s replies and the system prompt note', () => {
+  test('with NER, Claude\'s reply skips the model but still gets every name found so far', async ($, on) => {
+    world(on, { files: NER_FILE({ detection: 'ner' }) })
+    const { seen } = nerServer(on, { 'Nordlys Trading': 'company', We: 'person' })
+    await appendPrompt($, 'Write to Nordlys Trading')
+    const before = seen.detects
+    const stored = await $.session.append({
+      message: { type: 'assistant', role: 'assistant', content: [{ type: 'text', text: 'We wrote to Nordlys Trading.' }] },
+      door: 'response',
+      origin: { kind: 'model', model: 'claude' },
+      uuid: 'a1',
+    } as never)
+    const text = JSON.stringify(stored.message?.content)
+    expect(seen.detects).toBe(before)
+    expect(text).not.toContain('Nordlys')
+    expect(text).toContain('We wrote to')
+  })
+
+  test('when the system prompt can\'t be masked, its sections are removed but the note is still sent', async ($, on) => {
+    world(on, { sections: [{ id: 'env', text: 'repo of Acme Freight A/S', scope: 'session' }], failWrites: true })
+    await $.classic.SessionStart({ source: 'startup', transcript_path: TRANSCRIPT } as never)
+    const { sections } = await $.prompt.compose({ model: 'claude', promptModel: 'claude', surfaces: [], tools: [], outputStyle: null, traits: [] })
+    expect(JSON.stringify(sections)).not.toContain('Acme')
+    expect(sections.at(-1)?.id).toBe('customer-mask:note')
+    expect(sections.at(-1)?.text).toContain('The user sees the real values')
   })
 })

@@ -151,11 +151,31 @@ export function nerFinds(entities: readonly NerEntity[], s: NerSettings): NerFin
  * starting with a capital or a digit, and no word in camelCase or snake_case
  * ("onMatch", "NerSettings", "RAW_FIELDS"). Placeholders are never names.
  */
+/**
+ * Words that are never a name on their own: pronouns, greetings, roles. NER
+ * models sometimes tag "We" or "Your name"; a value found once is masked
+ * everywhere after, so one such find would hide "we" all session.
+ */
+const NOT_NAMES = new Set(
+  ('i me my mine we us our ours you your yours he him his she her hers they them their theirs it its ' +
+    'the a an and or of to name names client clients customer customers user users team sir madam dear ' +
+    'hi hello hey regards thanks mr mrs ms miss dr prof ' +
+    'jeg mig min mit mine vi os vores du dig din dit dine han hun hans hendes de dem deres kære hej kunde ' +
+    'jag mitt oss vår våra dina hon henne kund hei meg deg ' +
+    'ich mich mein meine wir uns unser sie ihr ihre er ihn sein liebe lieber hallo herr frau')
+    .split(' '),
+)
+
 export function looksLikeName(value: string): boolean {
   if (!/^[\p{Lu}\p{N}]/u.test(value) || !/\p{L}/u.test(value)) return false
+  if (value.split(/[\s.,]+/).filter(Boolean).every(w => NOT_NAMES.has(w.toLowerCase()))) return false
+  // Claude itself ("Co-Authored-By: Claude Sonnet 5.5" in Claude Code's own instructions).
+  if (/^Claude(\s+(Code|Sonnet|Opus|Haiku|Fable|Mythos)\b.*)?$/.test(value)) return false
   if (/[^\p{L}\p{M}\p{N} .,&'’/-]/u.test(value) || value.includes('&&')) return false
   if (LEGAL_SUFFIXES.some(s => s.toLowerCase() === value.toLowerCase())) return false
-  return value.split(/[\s/-]+/).every(w => !/\p{Ll}\p{Lu}/u.test(w))
+  // A legal suffix such as "ApS" is not camelCase code.
+  const suffix = new Set(LEGAL_SUFFIXES.map(s => s.toLowerCase().replace(/\.$/, '')))
+  return value.split(/[\s/-]+/).every(w => suffix.has(w.toLowerCase().replace(/\.$/, '')) || !/\p{Ll}\p{Lu}/u.test(w))
 }
 
 /** Placeholder labels: a model may tag them in text that explains placeholders. */
@@ -957,6 +977,8 @@ export function systemNote(vault: Vault): string {
     'for context; use it to understand the customer, but never write the hint into files, commands or messages. ' +
     'Use a placeholder exactly as written, including the part after the dot, wherever its real value belongs ' +
     '(prose, code, commands, file edits): it is restored automatically before any tool runs and before the user ' +
-    'reads your reply. Never guess, reconstruct or invent the real values, and do not comment on the placeholders unless asked.'
+    'reads your reply. The user sees the real values on screen and in every file you write, so from their side ' +
+    'nothing is masked: write as if each placeholder were its real value, and do not mention placeholders, masking ' +
+    'or missing values, or ask the user to fill them in, unless they ask about it. Never guess, reconstruct or invent the real values.'
   )
 }

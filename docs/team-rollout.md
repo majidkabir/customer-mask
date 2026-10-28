@@ -125,7 +125,7 @@ grep "customer-mask@customer-mask" /tmp/cc.log
 
 You want to see `hooks module customer-mask@customer-mask loaded (…, tier prepend)`. If it says `tier user`, Claude Code doesn't treat the mod as your organization's: check that the folder path in `extraKnownMarketplaces` is absolute and correct, and that the mod was copied there rather than installed from GitHub.
 
-In an interactive session, the status line shows `🔒 customer-mask on`, and `/customer-mask` lists the config it loaded (it should name the central `customers.json`).
+In an interactive session, the status line shows `customer-mask: 🔒 on`, and `/customer-mask` lists the config it loaded (it should name the central `customers.json`).
 
 **What was verified** (Claude Code 2.1.296 on Linux, in an isolated test with a real `/etc/claude-code/managed-settings.json`):
 

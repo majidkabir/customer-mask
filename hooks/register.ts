@@ -20,6 +20,7 @@ import {
   newMarker,
   systemNote,
   toolPolicy,
+  unmask,
   unmaskDeep,
   Vault,
   type MaskConfig,
@@ -331,7 +332,7 @@ async function reloadConfig($: EngineInterface): Promise<string> {
   await checkNer($)
   await $.ui.invalidate('prompt.context')
   await $.ui.invalidate('prompt.section')
-  $.ui.status(blocked() ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
+  $.ui.status(blocked() ? '🔒 BLOCKED' : '🔒 on') // Claude Code puts the plugin's name in front
   return `Reloaded. Config: ${configSummary}`
 }
 
@@ -541,7 +542,11 @@ export const register: Register = on => {
   on('session.append', async ($, e, next) => {
     await ready($)
     const before = vault.size
-    const extra = await nerExtra($, textsOf(e.message.content), ner.scope === 'all' || PROMPT_DOORS.has(e.door))
+    // Claude's own replies skip NER: Claude only sees placeholders, so they hold
+    // no customer it wasn't given, and the model would only add false finds
+    // ("We") and delay. The list and every name found so far still apply.
+    const reply = (e.message as { role?: string }).role === 'assistant'
+    const extra = await nerExtra($, textsOf(e.message.content), !reply && (ner.scope === 'all' || PROMPT_DOORS.has(e.door)))
     const content = maskContent(e.message.content, extra)
     await persist($, before)
     return next({ ...e, message: { ...e.message, content } })
@@ -589,7 +594,16 @@ export const register: Register = on => {
       return out
     }
 
-    for await (const chunk of next(e)) {
+    const stream = next(e)[Symbol.asyncIterator]()
+    for (;;) {
+      const step = await stream.next()
+      if (step.done) {
+        yield* drain()
+        // The step's answer as a whole is unmasked too.
+        const result = step.value
+        return result && typeof result.answer === 'string' ? { ...result, answer: unmask(result.answer, vault) } : result
+      }
+      const chunk = step.value
       if (chunk.kind === 'text' || chunk.kind === 'thinking') {
         const key = `${chunk.kind}:${chunk.index}`
         yield* drain(key)
@@ -602,8 +616,23 @@ export const register: Register = on => {
       yield* drain()
       yield chunk
     }
-    yield* drain()
   })
+
+  // The transcript on screen: the stored rows hold placeholders, and the
+  // finished reply, the prompt and a tool call's row are drawn from them. Show
+  // the real values there; what is stored and sent stays masked. Tools that
+  // keep placeholders (web, MCP) show what they sent.
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) =>
+    next({ ...e, props: { ...e.props, text: unmask(e.props.text, vault) } }),
+  ).catch(($, e, next) => (next.called ? undefined : next(e)))
+
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) =>
+    next({ ...e, props: { ...e.props, text: unmask(e.props.text, vault) } }),
+  ).catch(($, e, next) => (next.called ? undefined : next(e)))
+
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) =>
+    next(keepsPlaceholders(e.props.tool) ? e : { ...e, props: { ...e.props, input: unmaskDeep(e.props.input, vault) } }),
+  ).catch(($, e, next) => (next.called ? undefined : next(e)))
 
   // The model's tool calls: restore real values in the arguments before the
   // permission prompt and the tool see them, except for tools that would send
@@ -631,8 +660,15 @@ export const register: Register = on => {
     return { sections: [...masked, { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const }] }
   }).catch(async ($, e, next) => {
     // Masking failed: send the per-session sections' text as a note, not as it was.
+    // The note holds no customer data, so it is sent even then: without it,
+    // Claude takes the placeholders for missing values and says so.
     const { sections } = await next(e)
-    return { sections: sections.map(s => (s.scope === 'session' ? { ...s, text: UNCHECKED_NOTE } : s)) }
+    return {
+      sections: [
+        ...sections.map(s => (s.scope === 'session' ? { ...s, text: UNCHECKED_NOTE } : s)),
+        { id: `${NAME}:note`, text: systemNote(vault), scope: 'session' as const },
+      ],
+    }
   })
 
   // CLAUDE.md and the other blocks of the first message.
@@ -687,7 +723,7 @@ export const register: Register = on => {
       description: 'Show what customer-mask detects and has replaced; "reload" re-reads the config.',
       argumentHint: '[reload]',
     })
-    $.ui.status(blocked() ? `🔒 ${NAME}: BLOCKED` : `🔒 ${NAME} on`)
+    $.ui.status(blocked() ? '🔒 BLOCKED' : '🔒 on') // Claude Code puts the plugin's name in front
     return next(e)
   })
 

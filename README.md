@@ -83,7 +83,7 @@ python3 tools/ner-server/server.py --backend spacy
 /customer-mask
 ```
 
-It shows the config it loaded and every value it has replaced so far. The status line shows `🔒 customer-mask on`. After editing the config, `/customer-mask reload` applies it without restarting.
+It shows the config it loaded and every value it has replaced so far. The status line shows `customer-mask: 🔒 on`. After editing the config, `/customer-mask reload` applies it without restarting.
 
 ## What is covered
 

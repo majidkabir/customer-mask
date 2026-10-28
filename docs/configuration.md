@@ -180,7 +180,7 @@ Settings for `detection: "ner"` or `"both"`. All optional:
 | Backend | Install | Good at |
 | --- | --- | --- |
 | `spacy` | `pip install spacy` and a model: `python -m spacy download en_core_web_lg` (Danish: `da_core_news_lg`) | fast on a CPU; organizations, people and places only |
-| `gliner` (default) | `pip install gliner` (brings PyTorch); the model `urchade/gliner_multi_pii-v1` downloads from Hugging Face on first start | any label you name, many languages, built for personal data. Slower without a GPU |
+| `gliner` (default) | `pip install gliner protobuf sentencepiece` (gliner brings PyTorch; the PII model's tokenizer needs the other two); the model `urchade/gliner_multi_pii-v1` downloads from Hugging Face on first start | any label you name, many languages, built for personal data. Slower without a GPU |
 
 ```bash
 python3 tools/ner-server/server.py --backend spacy     # or: --backend gliner

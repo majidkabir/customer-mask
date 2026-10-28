@@ -21,7 +21,7 @@ Known gaps found while building and testing, and decisions that still need an ow
 | 15 | [Licence](#15-licence) | Repo | ✅ MIT |
 | 16 | [Prompt hooks failing open](#16-prompt-hooks-failing-open) | Correctness | ✅ Fixed in 0.4.1 |
 | 17 | [User config file on Windows](#17-user-config-file-on-windows) | Correctness | ✅ Fixed in 0.4.1 |
-| 18 | [What the screen shows](#18-what-the-screen-shows) | UX | ℹ️ Partly checked |
+| 18 | [What the screen shows](#18-what-the-screen-shows) | UX | ✅ Real values on screen since 0.7 |
 | 19 | [Re-identification from context](#19-re-identification-from-context) | Leak | ⚠️ Measured; reduced in 0.5, can't be removed |
 
 ---
@@ -152,7 +152,7 @@ Thinking is unmasked for **display** only. The thinking the transcript keeps is 
 - If masking a row ever throws or runs out of time anyway, the row is stored with its text removed (`session.append` now has a fail-closed `.catch`), never as it was.
 - `tests/scale.test.ts` fails if any of its cases (up to 50,000 names over 1 MB) takes 5 s or more.
 
-**NER (0.6):** with `detection: "ner"` or `"both"`, each masking hook first calls the local NER server. With spaCy on a CPU that adds about 10–30 ms for a prompt and about 2 s for 100 KB of text; the numbers are in [configuration](configuration.md#the-ner-server).
+**NER (0.6):** with `detection: "ner"` or `"both"`, each masking hook first calls the local NER server. Since 0.7 the server keeps its answer per line (Claude Code sends the same system prompt and reminders every turn, so after the first turn only new text goes through the model), runs a batch at a time with the smallest waiting request first (so a prompt isn't stuck behind a long file), and Claude's own replies skip it (they only hold placeholders and names found before; the model added false finds such as "We"). If the system prompt can't be checked in time, its sections are removed but the note about placeholders is still sent, so Claude doesn't take placeholders for missing values. GLiNER on a 2-core CPU takes about 0.8 s per 1,000 characters, measured in pii-mask. With spaCy on a CPU that adds about 10–30 ms for a prompt and about 2 s for 100 KB of text; the numbers are in [configuration](configuration.md#the-ner-server).
 
 **Still open: token overhead.** A placeholder such as `<<CUSTOMER_14.h5xz>>` usually takes more tokens than the value it replaces. In a real session where Claude read a 257 KB log with three customer values on every line, input tokens rose by about 20% and the session took about 30% longer (13 s → 17 s, two paired runs); about 1 s of that was the mod's own work, the rest the model reading more tokens. Sessions with few customer values are affected far less, but that hasn't been measured cleanly. A shorter placeholder format would cut the overhead; it needs a test that Claude still copies it reliably.
 
@@ -180,7 +180,7 @@ The mods API is marked *early access* and may change between releases. The tests
 
 ### 18. What the screen shows
 
-`session.append` rewrites a row before it is stored and sent, and Claude Code documents that the screen may show a row as it was before that rewrite. Checked: the streamed reply carries real values (stream-json text deltas), and in the SDK's `stream-json` output tool results arrive masked. Not checked: whether the interactive terminal and desktop app show your prompt and tool output masked or not. Either way the model and the stored transcript only get placeholders.
+The streamed reply is unmasked as it arrives (`turn.step`). Once a reply is done, Claude Code draws it again from the stored row, which holds placeholders; so do your prompt and a tool call's row. Seen in the sibling project [pii-mask](https://github.com/majidkabir/pii-mask) in an interactive session: the reply showed real values while it streamed, then switched to placeholders. Since 0.7, `ui.render` hooks on `AssistantMessage`, `UserMessage` and `ToolUse` put the real values back on screen. Only the drawing changes; the model and the stored transcript still get placeholders. Rows of tools that keep their placeholders (web, MCP) show the placeholders they sent.
 
 ### 19. Re-identification from context
 
