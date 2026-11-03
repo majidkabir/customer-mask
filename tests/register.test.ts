@@ -43,7 +43,7 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\
 
 function world(on: On, w: World = {}) {
   const files = w.files ?? { '/proj/.claude/customer-mask.json': CONFIG }
-  const seen = { requestSent: false, ran: '', writes: {} as Record<string, string> }
+  const seen = { mentioned: undefined as string | undefined, requestSent: false, ran: '', writes: {} as Record<string, string> }
 
   mock.env(on, w.env ?? { HOME: '/home/u' })
   on('session.cwd', () => ({ value: '/proj' }))
@@ -77,6 +77,10 @@ function world(on: On, w: World = {}) {
   on('prompt.compose', () => ({ sections: w.sections ?? [] }))
   on('prompt.context', () => ({ blocks: w.contextBlocks ?? [] }) as never)
   on('prompt.attachment', () => ({ text: w.attachmentText ?? null }) as never)
+  on('prompt.mention', ($, e) => {
+    seen.mentioned = e.path
+    return { type: 'file' } as never
+  })
   on('fs.list', ($, e) => {
     const prefix = `${posix(e.path)}/`
     const names = Object.keys(files).filter(f => f.startsWith(prefix) && !f.slice(prefix.length).includes('/'))
@@ -500,6 +504,16 @@ describe('images and PDFs', () => {
     expect(blocks.map(b => b.type)).toEqual(['text'])
     expect(String(blocks[0]?.text)).toContain('What does this say?')
     expect(String(blocks[0]?.text)).toContain('customer-mask removed an image or PDF')
+  })
+
+  test('an image or PDF mentioned with @ is refused, so Claude Code attaches nothing of it; other files are read', async ($, on) => {
+    const seen = world(on)
+    const res = await $.prompt.mention({ mention: 'card.png', path: '/proj/card.png' } as never) as { deny?: string }
+    expect(res.deny).toContain('drops images and PDFs')
+    expect((await $.prompt.mention({ mention: 'scan.pdf', path: '/proj/scan.pdf' } as never) as { deny?: string }).deny).toBeDefined()
+    expect(seen.mentioned).toBeUndefined()
+    await $.prompt.mention({ mention: 'notes.md', path: '/proj/notes.md' } as never)
+    expect(seen.mentioned).toBe('/proj/notes.md')
   })
 
   test('media: "allow" sends them through', async ($, on) => {

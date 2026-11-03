@@ -420,6 +420,9 @@ function maskText(text: string, options?: { hints?: boolean }, extra: readonly R
 
 type Block = { type: string; [field: string]: unknown }
 
+/** Files Claude Code attaches as an image or a PDF when mentioned with @. */
+const MEDIA_FILE = /\.(png|jpe?g|gif|webp|bmp|tiff?|pdf)$/i
+
 const isMedia = (b: Block) => dropMedia && MEDIA_BLOCKS.has(b.type)
 
 /** The texts in a row's blocks that masking rewrites (what NER is asked about). */
@@ -687,6 +690,15 @@ export const register: Register = on => {
   })
 
   // Text the engine injects on its own (mentioned files, reminders).
+  // A file mentioned with @ is attached by Claude Code itself, past session.append,
+  // so while images and PDFs are dropped, a mentioned one is refused before it is read.
+  on('prompt.mention', async ($, e, next) => {
+    if (!MEDIA_FILE.test(e.path)) return next(e)
+    await ready($)
+    if (!dropMedia) return next(e)
+    return { deny: `${NAME} drops images and PDFs, so ${e.path} was not attached` }
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: `${NAME} could not check ${e.path}, so it was not attached` }))
+
   on('prompt.attachment', async ($, e, next) => {
     await ready($)
     const before = vault.size

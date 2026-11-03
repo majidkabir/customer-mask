@@ -123,7 +123,7 @@ Only list a tool here if you know where its server sends data.
 
 What happens to images and PDFs (screenshots, scanned invoices, pasted pictures). Text masking can't see inside them.
 
-- `drop` (default): they are removed before anything is stored or sent. Inside a tool result a note takes their place; in a prompt the note is added to the prompt's text.
+- `drop` (default): they are removed before anything is stored or sent. Inside a tool result a note takes their place; in a prompt the note is added to the prompt's text. An image or PDF mentioned with `@` is not attached at all (since 0.7.1: Claude Code attaches those itself, past the hook that removes them).
 - `allow`: they are sent as they are. Only use this if you're sure no image in the project shows customer data.
 
 Any other value blocks the session.
