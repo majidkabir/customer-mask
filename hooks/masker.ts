@@ -437,6 +437,17 @@ const compact = (v: string) => v.replace(/[\s.-]/g, '').toUpperCase()
 const toLabel = (s: string) =>
   s.toUpperCase().replace(/[^A-Z0-9_]/g, '_').replace(/^[^A-Z]+/, '') || 'DATA'
 
+/** The IBAN checksum (ISO 13616, mod 97). */
+export function ibanValid(iban: string): boolean {
+  const s = iban.replace(/[\s-]/g, '').toUpperCase()
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return false
+  let rem = 0
+  for (const ch of s.slice(4) + s.slice(0, 4)) {
+    for (const d of /[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch) rem = (rem * 10 + Number(d)) % 97
+  }
+  return rem === 1
+}
+
 const withGlobal = (flags = '') => (flags.includes('g') ? flags : flags + 'g')
 
 /** Builds the ordered rule list. Earlier rules win, so whole emails go first. */
@@ -452,9 +463,12 @@ export function buildRules(config: MaskConfig): Rule[] {
     })
   }
   if (d.iban) {
+    // From 15 characters (Norway, NO93 8601 1117 947). The shortest ones must pass the IBAN
+    // checksum, so a code of the same shape isn't taken for one; longer ones are masked as before.
+    const iban = /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b/g
     rules.push({
       label: 'IBAN',
-      regex: /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/g,
+      scan: (text, onMatch) => text.replace(iban, m => (compact(m).length >= 16 || ibanValid(m) ? onMatch(m) : m)),
       normalize: compact,
     })
   }

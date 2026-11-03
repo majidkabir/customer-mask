@@ -56,6 +56,14 @@ describe('mask / unmask', () => {
     expect(unmask(masked, vault)).toBe(input)
   })
 
+  test('the shortest IBANs (Norway, 15 characters) are masked when their checksum holds', () => {
+    const vault = new Vault()
+    const no = ['NO93', '8601', '1117', '947'].join(' ')
+    const masked = mask(`Pay to ${no} today; ref AB12 CDEF GH34 5.`, buildRules(config), vault)
+    expect(masked).not.toContain('NO93')
+    expect(masked).toContain('ref AB12 CDEF GH34 5.') // the same shape, but no IBAN checksum
+  })
+
   test('the same spelling always gets the same placeholder; other spellings share its number', () => {
     const rules = buildRules(config)
     const vault = new Vault()
