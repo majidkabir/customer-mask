@@ -723,10 +723,10 @@ describe('NER failing closed', () => {
   })
 
   test('a bad NER setting blocks the session with the reason', async ($, on) => {
-    world(on, { files: NER_FILE({ detection: 'ner', ner: { timeoutMs: 20000 } }) })
+    world(on, { files: NER_FILE({ detection: 'ner', ner: { timeoutMs: 30000 } }) })
     nerServer(on, {})
     const chunks = await collect($.turn.step({ turnId: 't', index: 0 } as never))
-    expect(textOf(chunks)).toContain('ner.timeoutMs must be from 100 to 8000')
+    expect(textOf(chunks)).toContain('ner.timeoutMs must be from 100 to 25000')
   })
 
   test('an unknown detection mode blocks the session with the reason', async ($, on) => {

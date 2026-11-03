@@ -66,7 +66,7 @@ export const NER_DEFAULTS: NerSettings = {
   url: 'http://127.0.0.1:8765',
   labels: { company: 'CUSTOMER', person: 'PERSON' },
   threshold: 0.5,
-  timeoutMs: 4000,
+  timeoutMs: 20_000,
   scope: 'all',
   ignore: [],
 }
@@ -85,8 +85,8 @@ export function nerSettings(config: NerConfig = {}): NerSettings {
   if (typeof s.threshold !== 'number' || s.threshold < 0 || s.threshold > 1) {
     throw new Error(`ner.threshold must be a number from 0 to 1, not ${JSON.stringify(s.threshold)}.`)
   }
-  if (typeof s.timeoutMs !== 'number' || s.timeoutMs < 100 || s.timeoutMs > 8000) {
-    throw new Error(`ner.timeoutMs must be from 100 to 8000, not ${JSON.stringify(s.timeoutMs)}.`)
+  if (typeof s.timeoutMs !== 'number' || s.timeoutMs < 100 || s.timeoutMs > 25_000) {
+    throw new Error(`ner.timeoutMs must be from 100 to 25000, not ${JSON.stringify(s.timeoutMs)}.`)
   }
   if (s.scope !== 'all' && s.scope !== 'prompts') {
     throw new Error(`ner.scope must be "all" or "prompts", not ${JSON.stringify(s.scope)}.`)

@@ -455,7 +455,7 @@ describe('NER helpers', () => {
     const s = nerSettings({ url: 'http://10.0.0.5:9000/', labels: { 'street address': 'street address' } })
     expect(s.url).toBe('http://10.0.0.5:9000')
     expect(s.labels).toEqual({ 'street address': 'STREET_ADDRESS' })
-    expect(s.timeoutMs).toBe(4000)
+    expect(s.timeoutMs).toBe(20_000)
     expect(s.scope).toBe('all')
     expect(nerSettings().labels).toEqual({ company: 'CUSTOMER', person: 'PERSON' })
   })
@@ -463,7 +463,7 @@ describe('NER helpers', () => {
   test('settings: wrong values are refused with a reason', () => {
     expect(() => nerSettings({ url: 'ftp://x' })).toThrow('ner.url')
     expect(() => nerSettings({ threshold: 2 })).toThrow('ner.threshold')
-    expect(() => nerSettings({ timeoutMs: 9000 })).toThrow('ner.timeoutMs')
+    expect(() => nerSettings({ timeoutMs: 30000 })).toThrow('ner.timeoutMs')
     expect(() => nerSettings({ scope: 'tools' as never })).toThrow('ner.scope')
     expect(() => nerSettings({ labels: {} })).toThrow('ner.labels')
     expect(() => detectionMode('regex')).toThrow('detection must be')

@@ -157,7 +157,7 @@ Settings for `detection: "ner"` or `"both"`. All optional:
     "url": "http://127.0.0.1:8765",
     "labels": { "company": "CUSTOMER", "person": "PERSON" },
     "threshold": 0.5,
-    "timeoutMs": 4000,
+    "timeoutMs": 20000,
     "scope": "all",
     "ignore": ["Kubernetes", "Terraform"]
   }
@@ -169,7 +169,7 @@ Settings for `detection: "ner"` or `"both"`. All optional:
 | `url` | `http://127.0.0.1:8765` | where the NER server listens. Text is sent here, so keep it on your machine or a server in your network |
 | `labels` | `{ "company": "CUSTOMER", "person": "PERSON" }` | what to look for, and the placeholder label each find gets. GLiNER takes any words (`"street address": "ADDRESS"`); spaCy knows `company`, `person`, `location`, `city`, `country` and `address` (and a few synonyms such as `organization`) |
 | `threshold` | `0.5` | lowest confidence, from 0 to 1, that counts as a find (GLiNER gives one; spaCy doesn't, so every spaCy find counts) |
-| `timeoutMs` | `4000` | longest a call may take, 100 to 8000. Claude Code gives a hook 10 s in all |
+| `timeoutMs` | `20000` | longest a call may take, 100 to 25000. A hook's 10 s don't count its calls, but Claude Code ends a plugin's HTTP request after 30 s. A model like pii-mask's reads 1,400–3,500 characters a second on a laptop CPU, so a long file takes several seconds the first time; a call that runs out of time removes that content |
 | `scope` | `all` | `all`: everything Claude gets is checked (prompts, file contents, command output, `CLAUDE.md`, the per-session parts of the system prompt). `prompts`: only what you type. Faster, and file contents are then covered by the list, patterns and values found earlier |
 | `ignore` | `[]` | words the model flags that you never want masked, any case |
 
