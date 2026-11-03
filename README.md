@@ -116,9 +116,11 @@ If the mod itself fails, it fails closed. A broken config, an unreadable placeho
 - **[Development](docs/development.md)**: repo layout, tests, debugging, what has been verified
 - **[Open questions](docs/open-questions.md)**: known gaps and decisions still to make
 
+To hide people's personal data instead of a list of customers (names, emails, phone numbers, IBANs, ID numbers, faces in images), see the sibling project **[pii-mask](https://github.com/majidkabir/pii-mask)**: a local AI model finds them, no list needed.
+
 ## Status
 
-Version 0.6, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
+Version 0.7, an early prototype. The Claude Code mods API is marked *early access* and may change between releases. Read [open questions](docs/open-questions.md) before you rely on this for regulated data.
 
 ## License
 
